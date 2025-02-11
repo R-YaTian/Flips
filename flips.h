@@ -37,9 +37,9 @@
 #ifdef FLIPS_COMMIT_COUNT
 #define STR_(x) #x
 #define STR(x) STR_(x)
-#define flipsversion "Floating IPS v" STR(FLIPS_COMMIT_COUNT)
+#define flipsversion "Flips v" STR(FLIPS_COMMIT_COUNT)
 #else
-#define flipsversion "Floating IPS"
+#define flipsversion "Flips"
 #endif
 
 

@@ -21,17 +21,17 @@ rm -r obj/* || true
 #if trying to make a 32bit Flips, add -Wl,--large-address-aware
 
 echo 'Windows (1/3)'
-rm -r obj/* flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-generate -lgcov"
+rm -r obj/* flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
 [ -e flips.exe ] || exit
 echo 'Windows (2/3)'
 $WINE ./flips.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 $WINE ./flips.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 echo 'Windows (3/3)'
-rm flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-use -s"
+rm flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-use -s --static"
 
 #verify that there are no unexpected dependencies
 objdump -p flips.exe | grep 'DLL Name' | \
-	grep -Pvi '(msvcrt|advapi32|comctl32|comdlg32|gdi32|kernel32|shell32|user32|api-ms-win-crt)' && \
+	grep -Pvi '(msvcrt|advapi32|comctl32|comdlg32|gdi32|kernel32|shell32|user32|api-ms-win-crt|libgcc_s_dw2-1.dll)' && \
 	echo "Invalid dependency" && exit 1
 
 # a script's exit status is the same as the last command or pipeline run; if that's the above grep, things break

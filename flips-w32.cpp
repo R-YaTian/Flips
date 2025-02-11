@@ -6,6 +6,46 @@
 #include "flips.h"
 
 #ifdef FLIPS_WINDOWS
+#include <locale>
+#include <string>
+#include <windows.h>
+
+// Get Desktop DPI (Windows 7+)
+int GetDesktopDpi() {
+    HDC hdc = GetDC(NULL);
+    int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+    ReleaseDC(NULL, hdc);
+    return dpi;
+}
+
+double GetDpiScaleFactor() {
+    int dpi = GetDesktopDpi();
+    return dpi / 96.0;  // 96 DPI = 1.0
+}
+
+std::string Utf8ToAnsi(const char* utf8Str) {
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
+    if (wideLen <= 0) return "";
+
+    std::wstring wideStr(wideLen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, &wideStr[0], wideLen);
+
+    int ansiLen = WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, NULL, 0, NULL, NULL);
+    if (ansiLen <= 0) return "";
+
+    std::string ansiStr(ansiLen, '\0');
+    WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, &ansiStr[0], ansiLen, NULL, NULL);
+
+    return ansiStr;
+}
+
+std::wstring ConvertUtf8ToWstring(const std::string& utf8Str) {
+    std::wstring wstr(utf8Str.begin(), utf8Str.end());
+    return wstr;
+}
+
+double scaleFactor = 1.0;
+
 class file_w32 : public file {
 	size_t size;
 	HANDLE io;
@@ -108,7 +148,6 @@ void set_st_emulator(LPCWSTR newemu)
 	set_st_emulator_len(newemu, wcslen(newemu));
 }
 
-
 HWND hwndProgress;
 LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -120,9 +159,10 @@ void bpsdeltaBegin()
 	RECT mainwndpos;
 	GetWindowRect(hwndMain, &mainwndpos);
 	hwndProgress=CreateWindowA(
-						"floatingmunchers", flipsversion,
+						"flips", flipsversion,
 						WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER,
-						mainwndpos.left+53, mainwndpos.top+27, 101, 39, hwndMain, NULL, GetModuleHandle(NULL), NULL);
+						mainwndpos.left + 53 * scaleFactor, mainwndpos.top + 27 * scaleFactor,
+						101 * scaleFactor, 39 * scaleFactor, hwndMain, NULL, GetModuleHandle(NULL), NULL);
 	SetWindowLongPtrA(hwndProgress, GWLP_WNDPROC, (LONG_PTR)bpsdProgressWndProc);
 	
 	ShowWindow(hwndProgress, SW_SHOW);
@@ -174,14 +214,13 @@ void bpsdeltaEnd()
 	hwndProgress=NULL;
 }
 
-
 bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)
 {
 	OPENFILENAME ofn;
 	ZeroMemory(&ofn, sizeof(ofn));
 	ofn.lStructSize=sizeof(ofn);
 	ofn.hwndOwner=hwndMain;
-	ofn.lpstrFilter=TEXT("Most Common ROM Files\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64\0All Files (*.*)\0*.*\0");
+	ofn.lpstrFilter=TEXT("选择常见 ROM 文件\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64\0所有文件 (*.*)\0*.*\0");
 	ofn.lpstrFile=filename;
 	ofn.nMaxFile=MAX_PATH;
 	ofn.nFilterIndex=state.lastRomType;
@@ -225,10 +264,10 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 		ZeroMemory(&ofn, sizeof(ofn));
 		ofn.lStructSize=sizeof(ofn);
 		ofn.hwndOwner=hwndMain;
-		ofn.lpstrFilter=TEXT("All supported patches (*.ips, *.bps)\0*.ips;*.bps;*.ups\0All files (*.*)\0*.*\0");
+		ofn.lpstrFilter=TEXT("所有受支持的补丁格式 (*.ips, *.bps)\0*.ips;*.bps;*.ups\0所有文件 (*.*)\0*.*\0");
 		ofn.lpstrFile=patchnames;
 		ofn.nMaxFile=65535;
-		ofn.lpstrTitle=TEXT("Select Patches to Use");
+		ofn.lpstrTitle=TEXT("选择要使用的补丁文件");
 		ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_ALLOWMULTISELECT|OFN_EXPLORER;
 		ofn.lpstrDefExt=patchextensions[state.lastPatchType];
 		if (!GetOpenFileName(&ofn)) return 0;
@@ -250,7 +289,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 		{
 			inromname=inromname_buf;
 			inromname_buf[0]='\0';
-			if (!SelectRom(inromname_buf, TEXT("Select File to Patch"), false)) goto cancel;
+			if (!SelectRom(inromname_buf, TEXT("选择要打补丁的文件"), false)) goto cancel;
 		}
 		WCHAR outromname[MAX_PATH];
 		wcscpy(outromname, inromname);
@@ -263,7 +302,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 			LPWSTR inromext=GetExtension(inromname);
 			if (*inromext && *outromext) wcscpy(outromext, inromext);
 		}
-		if (!SelectRom(outromname, TEXT("Select Output File"), true)) goto cancel;
+		if (!SelectRom(outromname, TEXT("选择输出文件"), true)) goto cancel;
 		struct errorinfo errinf=ApplyPatchMem(patch, inromname, true, outromname, NULL, state.enableAutoRomSelector);
 		delete patch;
 		MessageBoxA(hwndMain, errinf.description, flipsversion, mboxtype[errinf.level]);
@@ -286,15 +325,15 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 			WCHAR thisFileNameWithPath[MAX_PATH];
 			bool anySuccess=false;
 			enum { e_none, e_notice, e_warning, e_invalid, e_io_rom_write, e_io_rom_read, e_no_auto, e_io_read_patch } worsterror=e_none;
-			LPCSTR messages[8]={
-					"The patches were applied successfully!",//e_none
-					"The patches were applied successfully!",//e_notice (ignore)
-					"The patches were applied, but one or more may be mangled or improperly created...",//e_warning
-					"Some patches were applied, but not all of the given patches are valid...",//e_invalid
-					"Some patches were applied, but not all of the desired ROMs could be created...",//e_rom_io_write
-					"Some patches were applied, but not all of the input ROMs could be read...",//e_io_rom_read
-					"Some patches were applied, but not all of the required input ROMs could be located...",//e_no_auto
-					"Some patches were applied, but not all of the given patches could be read...",//e_io_read_patch
+			LPCWSTR messages[8]={
+					L"所有补丁均应用成功!",//e_none
+					L"所有补丁均应用成功!",//e_notice (ignore)
+					L"所有补丁已应用, 但一个或多个补丁可能已损坏或创建不当...",//e_warning
+					L"部分补丁已应用, 但并非所有给定的补丁都有效...",//e_invalid
+					L"部分补丁已应用, 但并非所有请求输出的 ROM 都已创建成功...",//e_rom_io_write
+					L"部分补丁已应用, 但并非所有输入的 ROM 都可被读取...",//e_io_rom_read
+					L"部分补丁已应用, 但并非所有需要的 ROM 文件都能定位路径...",//e_no_auto
+					L"部分补丁已应用, 但并非所有给定的补丁都可被读取...",//e_io_read_patch
 				};
 			
 			wcscpy(thisFileNameWithPath, patchnames);
@@ -354,13 +393,13 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 					goto redo;
 				}
 				int severity=(worsterror==e_none ? el_ok : el_warning);
-				MessageBoxA(hwndMain, messages[worsterror], flipsversion, mboxtype[severity]);
+				MessageBoxW(hwndMain, messages[worsterror], ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[severity]);
 				return severity;
 			}
 		}
 		WCHAR inromname[MAX_PATH];
 		inromname[0]='\0';
-		if (!SelectRom(inromname, TEXT("Select Base File"), false)) return 0;
+		if (!SelectRom(inromname, TEXT("选择要打补丁的文件"), false)) return 0;
 		WCHAR thisFileNameWithPath[MAX_PATH];
 		wcscpy(thisFileNameWithPath, patchnames);
 		LPWSTR thisFileName=wcschr(thisFileNameWithPath, '\0');
@@ -376,26 +415,26 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 				 { el_ok,  el_ok,  el_warning,el_broken,      el_broken,  el_broken, el_broken, el_broken },
 				 { el_ok,  el_ok,  el_warning,el_warning,     el_warning, el_warning,el_warning,el_broken },
 			};
-		LPCSTR messages[2][8]={
+		LPCWSTR messages[2][8]={
 				{
 					//no error-free
 					NULL,//e_none
 					NULL,//e_notice
 					NULL,//e_warning
-					"None of these are valid patches for this ROM!",//e_invalid_this
-					"None of these are valid patches!",//e_invalid
-					"Couldn't write any ROMs. Are you on a read-only medium?",//e_io_write
-					"Couldn't read any patches. What exactly are you doing?",//e_io_read
-					"Couldn't read the input ROM. What exactly are you doing?",//e_io_read_rom
+					L"选择的补丁文件均非此 ROM 的有效补丁!",//e_invalid_this
+					L"选择的补丁文件均无效!",//e_invalid
+					L"无法写入任何 ROM 文件!",//e_io_write
+					L"无法读取任何补丁文件!",//e_io_read
+					L"无法读取输入的 ROM 文件",//e_io_read_rom
 				},{
 					//at least one error-free
-					"The patches were applied successfully!",//e_none
-					"The patches were applied successfully!",//e_notice
-					"The patches were applied, but one or more may be mangled or improperly created...",//e_warning
-					"Some patches were applied, but not all of the given patches are valid for this ROM...",//e_invalid_this
-					"Some patches were applied, but not all of the given patches are valid...",//e_invalid
-					"Some patches were applied, but not all of the desired ROMs could be created...",//e_io_write
-					"Some patches were applied, but not all of the given patches could be read...",//e_io_read
+					L"所有补丁均应用成功!",//e_none
+					L"所有补丁均应用成功!",//e_notice
+					L"所有补丁已应用, 但一个或多个补丁可能已损坏或创建不当...",//e_warning
+					L"部分补丁已应用, 但并非所有给定的补丁都对当前 ROM 文件有效...",//e_invalid_this
+					L"部分补丁已应用, 但并非所有给定的补丁都有效...",//e_invalid
+					L"部分补丁已应用, 但并非所有请求输出的 ROM 都已创建成功...",//e_io_write
+					L"部分补丁已应用, 但并非所有给定的补丁都可被读取...",//e_io_read
 					NULL,//e_io_read_rom
 				},
 			};
@@ -428,7 +467,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 		}
 		else worsterror=e_io_read_rom;
 		delete inrommap;
-		MessageBoxA(hwndMain, messages[anySuccess][worsterror], flipsversion, mboxtype[severity[anySuccess][worsterror]]);
+		MessageBoxW(hwndMain, messages[anySuccess][worsterror], ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[severity[anySuccess][worsterror]]);
 		return severity[anySuccess][worsterror];
 #undef max
 	}
@@ -442,12 +481,12 @@ void a_CreatePatch()
 	
 	romnames[0][0]='\0';
 	romnames[1][0]='\0';
-	if (!SelectRom(romnames[0], TEXT("Select ORIGINAL UNMODIFIED File to Use"), false)) return;
-	if (!SelectRom(romnames[1], TEXT("Select NEW MODIFIED File to Use"), false)) return;
+	if (!SelectRom(romnames[0], TEXT("选择原始未修改的文件"), false)) return;
+	if (!SelectRom(romnames[1], TEXT("选择已修改的文件"), false)) return;
 	
 	if (!wcsicmp(romnames[0], romnames[1]))
 	{
-		MessageBoxA(hwndMain, "That's the same file! You should really use two different files.", flipsversion, mboxtype[el_broken]);
+		MessageBoxW(hwndMain, L"选择的是相同的两个文件, 请选择两个不同的文件以进行差分", ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[el_broken]);
 		return;
 	}
 	
@@ -460,13 +499,13 @@ void a_CreatePatch()
 	ofn.lStructSize=sizeof(ofn);
 	ofn.hwndOwner=hwndMain;
 	ofn.lpstrFilter =
-		TEXT("BPS Patch File (*.bps)\0*.bps\0")
+		TEXT("BPS 补丁文件 (*.bps)\0*.bps\0")
 		//TEXT("BPS Patch File (Favor Creation Speed) (*.bps)\0*.bps\0")
-		TEXT("IPS Patch File (*.ips)\0*.ips\0");
+		TEXT("IPS 补丁文件 (*.ips)\0*.ips\0");
 	ofn.lpstrFile=patchname;
 	ofn.nMaxFile=MAX_PATH;
 	ofn.nFilterIndex=state.lastPatchType;
-	ofn.lpstrTitle=TEXT("Select File to Save As");
+	ofn.lpstrTitle=TEXT("文件另存为");
 	ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_OVERWRITEPROMPT;
 	ofn.lpstrDefExt=patchextensions[state.lastPatchType];
 	if (!GetSaveFileName(&ofn))
@@ -489,10 +528,10 @@ bool a_SetEmulator()
 	ZeroMemory(&ofn, sizeof(ofn));
 	ofn.lStructSize=sizeof(ofn);
 	ofn.hwndOwner=hwndMain;
-	ofn.lpstrFilter=TEXT("Emulator Files (*.exe)\0*.exe\0All files (*.*)\0*.*\0");
+	ofn.lpstrFilter=TEXT("模拟器程序 (*.exe)\0*.exe\0所有文件 (*.*)\0*.*\0");
 	ofn.lpstrFile=newemupath;
 	ofn.nMaxFile=MAX_PATH;
-	ofn.lpstrTitle=TEXT("Select Emulator to Use");
+	ofn.lpstrTitle=TEXT("选择要使用的模拟器");
 	ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
 	ofn.lpstrDefExt=TEXT("exe");
 	if (!GetOpenFileName(&ofn)) return false;
@@ -517,10 +556,10 @@ int a_ApplyRun(LPCWSTR clipatchname)
 		ZeroMemory(&ofn, sizeof(ofn));
 		ofn.lStructSize=sizeof(ofn);
 		ofn.hwndOwner=hwndMain;
-		ofn.lpstrFilter=TEXT("All supported patches (*.bps, *.ips)\0*.bps;*.ips;*.ups\0All files (*.*)\0*.*\0");
+		ofn.lpstrFilter=TEXT("所有受支持的补丁格式 (*.bps, *.ips)\0*.bps;*.ips;*.ups\0所有文件 (*.*)\0*.*\0");
 		ofn.lpstrFile=patchpath;
 		ofn.nMaxFile=MAX_PATH;
-		ofn.lpstrTitle=TEXT("Select Patch to Use");
+		ofn.lpstrTitle=TEXT("选择要使用的补丁文件");
 		ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
 		ofn.lpstrDefExt=TEXT("bps");
 		if (!GetOpenFileName(&ofn)) return 0;
@@ -530,7 +569,7 @@ int a_ApplyRun(LPCWSTR clipatchname)
 	file* patch = file::create(patchpath);
 	if (!patch)
 	{
-		errinf=error(el_broken, "Couldn't read input patch. What exactly are you doing?");
+		errinf=error(el_broken, Utf8ToAnsi("无法读取输入的补丁文件!").c_str());
 		goto error;
 	}
 	
@@ -541,7 +580,7 @@ int a_ApplyRun(LPCWSTR clipatchname)
 	if (!romname)
 	{
 		romname_base[0]='\0';
-		if (!SelectRom(romname_base, TEXT("Select Base File"), false))
+		if (!SelectRom(romname_base, TEXT("选择要打补丁的文件"), false))
 		{
 			delete patch;
 			return 0;
@@ -585,7 +624,7 @@ error:
 	PROCESS_INFORMATION processinformation;
 	if (!CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, patchpath, &startupinfo, &processinformation))
 	{
-		MessageBoxA(hwndMain, "Couldn't open emulator.", flipsversion, mboxtype[el_broken]);
+		MessageBoxA(hwndMain, Utf8ToAnsi("无法打开模拟器!").c_str(), flipsversion, mboxtype[el_broken]);
 		//DeleteFile(tempfilename);
 		return el_broken;
 	}
@@ -614,72 +653,73 @@ void a_ShowSettings()
 	}
 	
 	hwndSettings=CreateWindowA(
-		"floatingmunchers", flipsversion,
-		WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 3+6+202+6+3, 21 + 6+23+6+23+3+13+1+17+4+17+6 + 3, NULL, NULL, GetModuleHandle(NULL), NULL);
+		"flips", flipsversion,
+		WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
+		(3+6+202+6+3+18) * scaleFactor, (21+6+23+6+23+3+13+1+17+4+17+6+3) * scaleFactor,
+		NULL, NULL, GetModuleHandle(NULL), NULL);
 	
 	HFONT hfont=(HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	HWND item;
 	
-	int x=6;
-	int y=6;
+	int x=18 * scaleFactor;
+	int y=6 * scaleFactor;
 	int lineheight;
 	
-#define endline(padding) do { x=6; y+=lineheight+padding; } while(0)
+#define endline(padding) do { x=18; y+=lineheight+padding; } while(0)
 #define line(height) lineheight=height
 	
 #define widget(type, style, text, w, h, action) \
 	do { \
 		int thisy=y+(lineheight-h)/2; \
-		item=CreateWindowA(type, text, WS_CHILD|WS_TABSTOP|WS_VISIBLE|style, \
+		item=CreateWindowW(type, text, WS_CHILD|WS_TABSTOP|WS_VISIBLE|style, \
 		                   x, thisy, w, h, hwndSettings, (HMENU)(action), GetModuleHandle(NULL), NULL); \
 		SendMessage(item, WM_SETFONT, (WPARAM)hfont, 0); \
 		x+=w+6; \
 	} while(0)
 	
 #define firstbutton(text, w, h, action) \
-	widget(WC_BUTTONA, WS_GROUP|BS_DEFPUSHBUTTON, text, w, h, action)
+	widget(WC_BUTTONW, WS_GROUP|BS_DEFPUSHBUTTON, text, w, h, action)
 	
 #define button(text, w, h, action) \
-	widget(WC_BUTTONA, BS_PUSHBUTTON, text, w, h, action)
+	widget(WC_BUTTONW, BS_PUSHBUTTON, text, w, h, action)
 	
 #define labelL(text, w, h, action) \
-	widget(WC_STATICA, SS_LEFT, text, w, h, action)
+	widget(WC_STATICW, SS_LEFT, text, w, h, action)
 #define labelC(text, w, h, action) \
-	widget(WC_STATICA, SS_CENTER, text, w, h, action)
+	widget(WC_STATICW, SS_CENTER, text, w, h, action)
 	
 #define radio(text, w, h, action) \
-	widget(WC_BUTTONA, BS_AUTORADIOBUTTON, text, w, h, action)
+	widget(WC_BUTTONW, BS_AUTORADIOBUTTON, text, w, h, action)
 #define check(text, w, h, action) \
-	widget(WC_BUTTONA, BS_AUTOCHECKBOX, text, w, h, action)
+	widget(WC_BUTTONW, BS_AUTOCHECKBOX, text, w, h, action)
 	
-	line(23);
-	firstbutton("Select emulator", 202/*94*/, 23, 101);
-	endline(6);
+	line(23 * scaleFactor);
+	firstbutton(L"选择模拟器", 202 * scaleFactor, 23 * scaleFactor, 101);
+	endline(6 * scaleFactor);
 	
-	line(23);
-	button("Assign file types", 98, 23, 102); assocButton=item;
-	labelL("(can not be undone)", 98, 13, 0); assocText=item;
-	endline(3);
+	line(23 * scaleFactor);
+	button(L"关联文件类型", 98 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
+	labelL(L"(无法撤销)", 98 * scaleFactor, 13 * scaleFactor, 0); assocText=item;
+	endline(3 * scaleFactor);
 	
-	line(13);
-	labelC("When opening through associations:", 175, 13, 0);
-	endline(1);
-	line(17);
-	radio("Create ROM", 79, 17, 103); Button_SetCheck(item, (state.openInEmulatorOnAssoc==false));
-	radio("Run in emulator", 95, 17, 104); Button_SetCheck(item, (state.openInEmulatorOnAssoc==true));
-	endline(4);
+	line(13 * scaleFactor);
+	labelC(L"当双击打开补丁文件时做此操作:", 175 * scaleFactor, 13 * scaleFactor, 0);
+	endline(1 * scaleFactor);
+
+	line(17  * scaleFactor);
+	radio(L"创建 ROM", 79 * scaleFactor, 17 * scaleFactor, 103); Button_SetCheck(item, (state.openInEmulatorOnAssoc==false));
+	radio(L"于模拟器中运行", 105 * scaleFactor, 17 * scaleFactor, 104); Button_SetCheck(item, (state.openInEmulatorOnAssoc==true));
+	endline(4 * scaleFactor);
 	
-	line(17);
-	check("Enable automatic ROM selector", 202, 17, 105); Button_SetCheck(item, (state.enableAutoRomSelector));
-	endline(3);
+	line(17 * scaleFactor);
+	check(L"启用自动选取 ROM", 202 * scaleFactor, 17 * scaleFactor, 105); Button_SetCheck(item, (state.enableAutoRomSelector));
+	endline(3 * scaleFactor);
 	
 	ShowWindow(hwndSettings, SW_SHOW);
 #undef firstbutton
 #undef button
 #undef label
 #undef radio
-	//if (!fileTypesAssigned) button(6,68,200,23, "Assign File Types");
 }
 
 void key_core(bool checkonly, LPCWSTR path, LPCWSTR value, bool * p_hasExts, bool * p_refresh)
@@ -756,12 +796,12 @@ void a_AssignFileTypes(bool checkonly)
 		{
 			RECT wndpos;
 			GetWindowRect(hwndMain, &wndpos);
-			MoveWindow(hwndMain, wndpos.left, wndpos.top, 218, 93, true);
+			MoveWindow(hwndMain, wndpos.left, wndpos.top, 240 * scaleFactor, 93 * scaleFactor, true);
 		}
 	}
 	if (!checkonly || hasExts)
 	{
-		SetWindowText(assocText, TEXT("(already done)"));
+		SetWindowText(assocText, TEXT("(关联完成)"));
 		Button_Enable(assocButton, false);
 	}
 }
@@ -818,6 +858,7 @@ static HFONT try_create_font(const char * name, int size)
 
 int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 {
+	scaleFactor = GetDpiScaleFactor();
 	WNDCLASSA wc;
 	wc.style=0;
 	wc.lpfnWndProc=WindowProc;
@@ -826,16 +867,16 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	wc.hInstance=GetModuleHandle(NULL);
 	wc.hIcon=LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(0));
 	wc.hCursor=LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground=GetSysColorBrush(COLOR_3DFACE);//(HBRUSH)(COLOR_WINDOW + 1);
+	wc.hbrBackground=GetSysColorBrush(COLOR_3DFACE);
 	wc.lpszMenuName=NULL;
-	wc.lpszClassName="floatingmunchers";
+	wc.lpszClassName="flips";
 	RegisterClassA(&wc);
 	
 	MSG msg;
 	hwndMain=CreateWindowA(
-				"floatingmunchers", flipsversion,
+				"flips", flipsversion,
 				WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
-				state.windowleft, state.windowtop, 204, 93, NULL, NULL, GetModuleHandle(NULL), NULL);
+				state.windowleft, state.windowtop, 240 * scaleFactor, 93 * scaleFactor, NULL, NULL, GetModuleHandle(NULL), NULL);
 	
 	HFONT hfont=try_create_font("Segoe UI", 9);
 	if (!hfont) hfont=try_create_font("MS Shell Dlg 2", 8);
@@ -845,19 +886,17 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	HWND lastbutton;
 #define button(x,y,w,h, text) \
 		do { \
-			lastbutton=CreateWindowA("BUTTON", text, WS_CHILD|WS_TABSTOP|WS_VISIBLE|(buttonid==0?(BS_DEFPUSHBUTTON|WS_GROUP):(BS_PUSHBUTTON)), \
+			lastbutton=CreateWindow(L"BUTTON", text, WS_CHILD|WS_TABSTOP|WS_VISIBLE|(buttonid==0?(BS_DEFPUSHBUTTON|WS_GROUP):(BS_PUSHBUTTON)), \
 											x, y, w, h, hwndMain, (HMENU)(uintptr_t)(buttonid+1), GetModuleHandle(NULL), NULL); \
 			SendMessage(lastbutton, WM_SETFONT, (WPARAM)hfont, 0); \
 			buttonid++; \
 		} while(0)
-	button(6,  6,  90/*77*/,23, "Apply Patch"); SetActiveWindow(lastbutton);
-	button(104,6,  90/*83*/,23, "Create Patch");
-	button(6,  37, 90/*90*/,23, "Apply and Run");
-	button(104,37, 90/*59*/,23, "Settings");
+	button(24 * scaleFactor,  6 * scaleFactor,  90 * scaleFactor, 23 * scaleFactor, L"应用补丁"); SetActiveWindow(lastbutton);
+	button(122 * scaleFactor, 6 * scaleFactor,  90 * scaleFactor, 23 * scaleFactor, L"创建补丁");
+	button(24 * scaleFactor, 37 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"应用并运行");
+	button(122 * scaleFactor, 37 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"设定");
 	
 	ShowWindow(hwndMain, nCmdShow);
-	
-	a_AssignFileTypes(true);
 	
 	while (GetMessageA(&msg, NULL, 0, 0)>0)
 	{

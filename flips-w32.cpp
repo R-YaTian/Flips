@@ -45,6 +45,7 @@ std::wstring ConvertUtf8ToWstring(const std::string& utf8Str) {
 }
 
 double scaleFactor = 1.0;
+bool assocStatus = true;
 
 class file_w32 : public file {
 	size_t size;
@@ -640,7 +641,7 @@ error:
 	return errinf.level;
 }
 
-void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey = false);
+void a_AssignFileTypes(bool checkKey, bool deleteKey = false);
 
 HWND assocText;
 HWND assocButton;
@@ -696,11 +697,11 @@ void a_ShowSettings()
 	line(23 * scaleFactor);
 	firstbutton(L"选择模拟器", 202 * scaleFactor, 23 * scaleFactor, 101);
 	endline(6 * scaleFactor);
-	
-	bool assocStatus = true;
-	a_AssignFileTypes(true, &assocStatus, false);
+
+	assocStatus = true;
+	a_AssignFileTypes(true, false);
 	line(23 * scaleFactor);
-	button(assocStatus ? L"取消关联文件类型" : L"关联文件类型", 108 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
+	button(assocStatus ? L"取消关联补丁文件" : L"关联补丁文件", 108 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
 	labelL(assocStatus ? L"(已关联)" : L"(尚未关联)", 98 * scaleFactor, 13 * scaleFactor, 0); assocText=item;
 	endline(3 * scaleFactor);
 	
@@ -724,7 +725,7 @@ void a_ShowSettings()
 #undef radio
 }
 
-void key_core(bool checkKey, LPCWSTR path, LPCWSTR value, bool deleteKey, bool * p_refresh, bool * checkResult)
+void key_core(bool checkKey, LPCWSTR path, LPCWSTR value, bool deleteKey, bool * p_refresh)
 {
 	HKEY hkey;
 	WCHAR truepath[60];
@@ -734,12 +735,12 @@ void key_core(bool checkKey, LPCWSTR path, LPCWSTR value, bool deleteKey, bool *
 	{
 		if (RegOpenKeyEx(HKEY_CURRENT_USER, truepath, 0, KEY_READ | KEY_SET_VALUE, &hkey) == ERROR_SUCCESS) {
 			RegCloseKey(hkey);
-			if (deleteKey)
+			if (deleteKey) {
+				if (path[0]=='.') *p_refresh=true;
 				RegDeleteKey(HKEY_CURRENT_USER, truepath);  // Delete
-		} else {
-			if (checkResult != NULL)
-				*checkResult = false;
-		}
+			}
+		} else if (assocStatus == true)
+			assocStatus = false;
 		return;
 	}
 	else
@@ -754,7 +755,7 @@ void key_core(bool checkKey, LPCWSTR path, LPCWSTR value, bool deleteKey, bool *
 	}
 }
 
-void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey)
+void a_AssignFileTypes(bool checkKey, bool deleteKey)
 {
 	WCHAR outstring[MAX_PATH+30];
 	outstring[0]='"';
@@ -765,25 +766,41 @@ void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey)
 
 	bool refresh=false;
 #define key(path, value) \
-			key_core(checkKey, TEXT(path), TEXT(value), deleteKey, &refresh, checkResult)
+			key_core(checkKey, TEXT(path), TEXT(value), deleteKey, &refresh)
 #define key_path(path, value) \
-			wcscpy(outstringend, TEXT(value)); key_core(checkKey, TEXT(path), outstring, deleteKey, &refresh, checkResult)
+			wcscpy(outstringend, TEXT(value)); key_core(checkKey, TEXT(path), outstring, deleteKey, &refresh)
 #define key_touch(path) \
-			key_core(checkKey, TEXT(path), NULL, deleteKey, &refresh, checkResult)
+			key_core(checkKey, TEXT(path), NULL, deleteKey, &refresh)
 	
 	key(".ips", "FloatingIPSFileIPS");
-	key("FloatingIPSFileIPS", "Floating IPS File");
-	key_path("FloatingIPSFileIPS\\DefaultIcon", ",1");
-	key_touch("FloatingIPSFileIPS\\shell");
-	key_touch("FloatingIPSFileIPS\\shell\\open");
-	key_path("FloatingIPSFileIPS\\shell\\open\\command", " \"%1\"");
+	if (!deleteKey) {
+		key("FloatingIPSFileIPS", "Floating IPS File");
+		key_path("FloatingIPSFileIPS\\DefaultIcon", ",1");
+		key_touch("FloatingIPSFileIPS\\shell");
+		key_touch("FloatingIPSFileIPS\\shell\\open");
+		key_path("FloatingIPSFileIPS\\shell\\open\\command", " \"%1\"");
+	} else {
+		key_path("FloatingIPSFileIPS\\DefaultIcon", ",1");
+		key_path("FloatingIPSFileIPS\\shell\\open\\command", " \"%1\"");
+		key_touch("FloatingIPSFileIPS\\shell\\open");
+		key_touch("FloatingIPSFileIPS\\shell");
+		key("FloatingIPSFileIPS", "Floating IPS File");
+	}
 	
 	key(".bps", "FloatingIPSFileBPS");
-	key("FloatingIPSFileBPS", "Floating IPS File");
-	key_path("FloatingIPSFileBPS\\DefaultIcon", ",2");
-	key_touch("FloatingIPSFileBPS\\shell");
-	key_touch("FloatingIPSFileBPS\\shell\\open");
-	key_path("FloatingIPSFileBPS\\shell\\open\\command", " \"%1\"");
+	if (!deleteKey) {
+		key("FloatingIPSFileBPS", "Floating IPS File");
+		key_path("FloatingIPSFileBPS\\DefaultIcon", ",2");
+		key_touch("FloatingIPSFileBPS\\shell");
+		key_touch("FloatingIPSFileBPS\\shell\\open");
+		key_path("FloatingIPSFileBPS\\shell\\open\\command", " \"%1\"");
+	} else {
+		key_path("FloatingIPSFileBPS\\DefaultIcon", ",2");
+		key_path("FloatingIPSFileBPS\\shell\\open\\command", " \"%1\"");
+		key_touch("FloatingIPSFileBPS\\shell\\open");
+		key_touch("FloatingIPSFileBPS\\shell");
+		key("FloatingIPSFileBPS", "Floating IPS File");
+	}
 	
 	if (refresh)
 	{
@@ -798,8 +815,9 @@ void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey)
 	}
 	if (!checkKey || deleteKey)
 	{
-		SetWindowText(assocText, TEXT("(关联完成)"));
-		Button_Enable(assocButton, false);
+		assocStatus = deleteKey ? false : true;
+		SetWindowText(assocText, deleteKey ? TEXT("(已取消关联)") : TEXT("(关联完毕)"));
+		SetWindowText(assocButton, deleteKey ? TEXT("关联补丁文件") : TEXT("取消关联补丁文件"));
 	}
 }
 
@@ -815,7 +833,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (wParam==4) a_ShowSettings();
 			
 			if (wParam==101) a_SetEmulator();
-			if (wParam==102) a_AssignFileTypes(false, NULL, false);
+			if (wParam==102) a_AssignFileTypes(assocStatus ? true : false, assocStatus);
 			if (wParam==103) state.openInEmulatorOnAssoc=false;
 			if (wParam==104) state.openInEmulatorOnAssoc=true;
 			if (wParam==105) state.enableAutoRomSelector^=1;
@@ -847,7 +865,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 static HFONT try_create_font(const char * name, int size)
 {
-	return CreateFontA(-size*96/72, 0, 0, 0, FW_NORMAL,
+	return CreateFontA(-size*96/72 * scaleFactor, 0, 0, 0, FW_NORMAL,
 	                   FALSE, FALSE, FALSE, DEFAULT_CHARSET,
 	                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH|FF_DONTCARE,
 	                   name);

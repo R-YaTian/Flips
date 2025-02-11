@@ -37,7 +37,7 @@
 #ifdef FLIPS_COMMIT_COUNT
 #define STR_(x) #x
 #define STR(x) STR_(x)
-#define flipsversion "Flips v" STR(FLIPS_COMMIT_COUNT)
+#define flipsversion "Flips v" STR(FLIPS_COMMIT_COUNT) "c"
 #else
 #define flipsversion "Flips"
 #endif

@@ -56,7 +56,7 @@ ifeq ($(TARGET),)
   endif
 endif
 
-COMMIT_COUNT := $(shell git rev-list --count master)
+COMMIT_COUNT := $(shell git rev-list --count chs)
 ifneq ($(COMMIT_COUNT),)
   CFLAGS_G += -DFLIPS_COMMIT_COUNT=$(COMMIT_COUNT)
 endif

@@ -640,7 +640,7 @@ error:
 	return errinf.level;
 }
 
-void a_AssignFileTypes(bool checkonly);
+void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey = false);
 
 HWND assocText;
 HWND assocButton;
@@ -697,9 +697,11 @@ void a_ShowSettings()
 	firstbutton(L"选择模拟器", 202 * scaleFactor, 23 * scaleFactor, 101);
 	endline(6 * scaleFactor);
 	
+	bool assocStatus = true;
+	a_AssignFileTypes(true, &assocStatus, false);
 	line(23 * scaleFactor);
-	button(L"关联文件类型", 98 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
-	labelL(L"(无法撤销)", 98 * scaleFactor, 13 * scaleFactor, 0); assocText=item;
+	button(assocStatus ? L"取消关联文件类型" : L"关联文件类型", 108 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
+	labelL(assocStatus ? L"(已关联)" : L"(尚未关联)", 98 * scaleFactor, 13 * scaleFactor, 0); assocText=item;
 	endline(3 * scaleFactor);
 	
 	line(13 * scaleFactor);
@@ -722,30 +724,26 @@ void a_ShowSettings()
 #undef radio
 }
 
-void key_core(bool checkonly, LPCWSTR path, LPCWSTR value, bool * p_hasExts, bool * p_refresh)
+void key_core(bool checkKey, LPCWSTR path, LPCWSTR value, bool deleteKey, bool * p_refresh, bool * checkResult)
 {
 	HKEY hkey;
-	DWORD type;
 	WCHAR truepath[60];
 	wcscpy(truepath, TEXT("Software\\Classes\\"));
 	wcscat(truepath, path);
-	WCHAR regval[MAX_PATH+30];
-	DWORD regvallen;
-	bool hasExts=true;
-	if (checkonly)
+	if (checkKey)
 	{
-		regvallen=sizeof(regval);
-		if (RegOpenKeyEx(HKEY_CURRENT_USER, truepath, 0, KEY_READ, &hkey)!=ERROR_SUCCESS) goto add;
-		if (value && RegQueryValueEx(hkey, NULL, NULL, &type, (LPBYTE)regval, &regvallen)!=ERROR_SUCCESS) hasExts=false;
-		RegCloseKey(hkey);
-		if (!hasExts) goto add;
-		if (value && wcsncmp(regval, value, sizeof(regval)/sizeof(*regval))) *p_hasExts=false;
+		if (RegOpenKeyEx(HKEY_CURRENT_USER, truepath, 0, KEY_READ | KEY_SET_VALUE, &hkey) == ERROR_SUCCESS) {
+			RegCloseKey(hkey);
+			if (deleteKey)
+				RegDeleteKey(HKEY_CURRENT_USER, truepath);  // Delete
+		} else {
+			if (checkResult != NULL)
+				*checkResult = false;
+		}
 		return;
 	}
 	else
 	{
-	add:
-		regvallen=sizeof(regval);
 		if (RegCreateKeyExW(HKEY_CURRENT_USER, truepath, 0, NULL, 0, KEY_WRITE, NULL, &hkey, NULL)==ERROR_SUCCESS)
 		{
 			if (value) RegSetValueExW(hkey, NULL, 0, REG_SZ, (BYTE*)value, (wcslen(value)+1)*sizeof(WCHAR));
@@ -756,7 +754,7 @@ void key_core(bool checkonly, LPCWSTR path, LPCWSTR value, bool * p_hasExts, boo
 	}
 }
 
-void a_AssignFileTypes(bool checkonly)
+void a_AssignFileTypes(bool checkKey, bool* checkResult, bool deleteKey)
 {
 	WCHAR outstring[MAX_PATH+30];
 	outstring[0]='"';
@@ -764,15 +762,14 @@ void a_AssignFileTypes(bool checkonly)
 	LPWSTR outstringend=wcschr(outstring, '\0');
 	*outstringend='"';
 	outstringend++;
-	
-	bool hasExts=true;
+
 	bool refresh=false;
 #define key(path, value) \
-			key_core(checkonly, TEXT(path), TEXT(value), &hasExts, &refresh)
+			key_core(checkKey, TEXT(path), TEXT(value), deleteKey, &refresh, checkResult)
 #define key_path(path, value) \
-			wcscpy(outstringend, TEXT(value)); key_core(checkonly, TEXT(path), outstring, &hasExts, &refresh)
+			wcscpy(outstringend, TEXT(value)); key_core(checkKey, TEXT(path), outstring, deleteKey, &refresh, checkResult)
 #define key_touch(path) \
-			key_core(checkonly, TEXT(path), NULL, &hasExts, &refresh)
+			key_core(checkKey, TEXT(path), NULL, deleteKey, &refresh, checkResult)
 	
 	key(".ips", "FloatingIPSFileIPS");
 	key("FloatingIPSFileIPS", "Floating IPS File");
@@ -799,7 +796,7 @@ void a_AssignFileTypes(bool checkonly)
 			MoveWindow(hwndMain, wndpos.left, wndpos.top, 240 * scaleFactor, 93 * scaleFactor, true);
 		}
 	}
-	if (!checkonly || hasExts)
+	if (!checkKey || deleteKey)
 	{
 		SetWindowText(assocText, TEXT("(关联完成)"));
 		Button_Enable(assocButton, false);
@@ -818,7 +815,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (wParam==4) a_ShowSettings();
 			
 			if (wParam==101) a_SetEmulator();
-			if (wParam==102) a_AssignFileTypes(false);
+			if (wParam==102) a_AssignFileTypes(false, NULL, false);
 			if (wParam==103) state.openInEmulatorOnAssoc=false;
 			if (wParam==104) state.openInEmulatorOnAssoc=true;
 			if (wParam==105) state.enableAutoRomSelector^=1;

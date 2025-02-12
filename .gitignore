@@ -1,6 +1,7 @@
 obj/
 flips
 flips.exe
+flips_sfx.exe
 flipscfg.bin
 
 *.obj

@@ -22,6 +22,7 @@ rm -r obj/* || true
 
 echo 'Windows (1/3)'
 rm -r obj/* flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
+rm -r obj/* flips.exe; $MAKE -f Makefile.sfx CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
 [ -e flips.exe ] || exit
 echo 'Windows (2/3)'
 $WINE ./flips.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null

@@ -5,7 +5,7 @@
 
 #include "flips.h"
 
-#ifdef FLIPS_WINDOWS
+#if FLIPS_WINDOWS && !FLIPS_WINDOWS_SFX
 #include <locale>
 #include <string>
 #include <windows.h>

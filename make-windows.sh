@@ -21,13 +21,14 @@ rm -r obj/* || true
 #if trying to make a 32bit Flips, add -Wl,--large-address-aware
 
 echo 'Windows (1/3)'
+rm -r obj/* flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
 rm -r obj/* flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
-rm -r obj/* flips.exe; $MAKE -f Makefile.sfx CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
 [ -e flips.exe ] || exit
 echo 'Windows (2/3)'
 $WINE ./flips.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 $WINE ./flips.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 echo 'Windows (3/3)'
+rm flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS -fprofile-use -s --static"
 rm flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-use -s --static"
 
 #verify that there are no unexpected dependencies

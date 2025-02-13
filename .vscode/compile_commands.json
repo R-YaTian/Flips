@@ -1,0 +1,12 @@
+[
+    {
+        "directory": "${workspaceRoot}",
+        "file": "${workspaceRoot}/flips-w32-sfp.cpp",
+        "command": "g++ -Wall -O2 -DFLIPS_WINDOWS -D FLIPS_WINDOWS_SFP -c flips-w32-sfp.cpp"
+    },
+    {
+        "directory": "${workspaceRoot}",
+        "file": "${workspaceRoot}/flips-w32.cpp",
+        "command": "g++ -Wall -O2 -DFLIPS_WINDOWS -c flips-w32.cpp"
+    }
+]

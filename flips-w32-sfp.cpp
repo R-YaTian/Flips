@@ -4,7 +4,7 @@
 
 #include "flips.h"
 
-#ifdef FLIPS_WINDOWS_SFX
+#ifdef FLIPS_WINDOWS_SFP
 #include <locale>
 #include <string>
 #include <windows.h>
@@ -22,9 +22,22 @@ double GetDpiScaleFactor() {
     return dpi / 96.0;  // 96 DPI = 1.0
 }
 
-std::wstring ConvertUtf8ToWstring(const std::string& utf8Str) {
-    std::wstring wstr(utf8Str.begin(), utf8Str.end());
-    return wstr;
+void CenterWindow(HWND hwnd) {
+    RECT rect;
+    GetWindowRect(hwnd, &rect);  // Get current window size
+
+    int windowWidth = rect.right - rect.left;
+    int windowHeight = rect.bottom - rect.top;
+
+    // Get screen size
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    // Calc new window position
+    int x = (screenWidth - windowWidth) / 2;
+    int y = (screenHeight - windowHeight) / 2;
+
+    SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 }
 
 double scaleFactor = 1.0;
@@ -105,7 +118,6 @@ HWND hwndMain=NULL;
 
 struct {
     unsigned char lastRomType;
-    bool enableAutoRomSelector;
 } static state;
 
 HWND hwndProgress;
@@ -207,7 +219,6 @@ int a_ApplyPatch(LPCWSTR clipatchname)
     bool multiplePatches;
     if (clipatchname)
     {
-        multiplePatches=false;
         wcscpy(patchnames, clipatchname);
     }
     else
@@ -223,14 +234,11 @@ int a_ApplyPatch(LPCWSTR clipatchname)
         {
 
         WCHAR inromname_buf[MAX_PATH];
-        LPCWSTR inromname=NULL;
-        if (state.enableAutoRomSelector) inromname=FindRomForPatch(patch, NULL);
-        if (!inromname)
-        {
-            inromname=inromname_buf;
-            inromname_buf[0]='\0';
-            if (!SelectRom(inromname_buf, TEXT("选择要打补丁的文件"), false)) goto cancel;
-        }
+        LPCWSTR inromname = NULL;
+        inromname=inromname_buf;
+        inromname_buf[0]='\0';
+        if (!SelectRom(inromname_buf, TEXT("选择要打补丁的文件"), false)) goto cancel;
+
         WCHAR outromname[MAX_PATH];
         wcscpy(outromname, inromname);
         LPWSTR outrompath=GetBaseName(outromname);
@@ -243,7 +251,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
             if (*inromext && *outromext) wcscpy(outromext, inromext);
         }
         if (!SelectRom(outromname, TEXT("选择输出文件"), true)) goto cancel;
-        struct errorinfo errinf=ApplyPatchMem(patch, inromname, true, outromname, NULL, state.enableAutoRomSelector);
+        struct errorinfo errinf=ApplyPatchMem(patch, inromname, true, outromname, NULL, false);
         delete patch;
         MessageBoxA(hwndMain, errinf.description, flipsversion, mboxtype[errinf.level]);
         return errinf.level;
@@ -251,165 +259,6 @@ int a_ApplyPatch(LPCWSTR clipatchname)
     cancel:
         delete patch;
         return 0;
-    }
-    else
-    {
-#define max(a, b) (a > b ? a : b)
-        if (state.enableAutoRomSelector)
-        {
-            LPCWSTR foundRom=NULL;
-            bool canUseFoundRom=true;
-            bool usingFoundRom=false;
-
-        redo: ;
-            WCHAR thisFileNameWithPath[MAX_PATH];
-            bool anySuccess=false;
-            enum { e_none, e_notice, e_warning, e_invalid, e_io_rom_write, e_io_rom_read, e_no_auto, e_io_read_patch } worsterror=e_none;
-            LPCWSTR messages[8]={
-                    L"所有补丁均应用成功!",//e_none
-                    L"所有补丁均应用成功!",//e_notice (ignore)
-                    L"所有补丁已应用, 但一个或多个补丁可能已损坏或创建不当...",//e_warning
-                    L"部分补丁已应用, 但并非所有给定的补丁都有效...",//e_invalid
-                    L"部分补丁已应用, 但并非所有请求输出的 ROM 都已创建成功...",//e_rom_io_write
-                    L"部分补丁已应用, 但并非所有输入的 ROM 都可被读取...",//e_io_rom_read
-                    L"部分补丁已应用, 但并非所有需要的 ROM 文件都能定位路径...",//e_no_auto
-                    L"部分补丁已应用, 但并非所有给定的补丁都可被读取...",//e_io_read_patch
-                };
-
-            wcscpy(thisFileNameWithPath, patchnames);
-            LPWSTR thisFileName=wcschr(thisFileNameWithPath, '\0');
-            *thisFileName='\\';
-            thisFileName++;
-
-            LPWSTR thisPatchName=wcschr(patchnames, '\0')+1;
-            while (*thisPatchName)
-            {
-                wcscpy(thisFileName, thisPatchName);
-                file* patch = file::create(thisFileNameWithPath);
-                {
-                if (!patch)
-                {
-                    worsterror=max(worsterror, e_io_read_patch);
-                    canUseFoundRom=false;
-                    goto multi_auto_next;
-                }
-                bool possible;
-                LPCWSTR romname=FindRomForPatch(patch, &possible);
-                if (usingFoundRom)
-                {
-                    if (!romname) romname=foundRom;
-                    else goto multi_auto_next;
-                }
-                else
-                {
-                    if (!romname)
-                    {
-                        if (possible) canUseFoundRom=false;
-                        worsterror=max(worsterror, e_no_auto);
-                        goto multi_auto_next;
-                    }
-                }
-                if (!foundRom) foundRom=romname;
-                if (foundRom!=romname) canUseFoundRom=false;
-
-                wcscpy(GetExtension(thisFileName), GetExtension(romname));
-                struct errorinfo errinf=ApplyPatchMem(patch, romname, true, thisFileNameWithPath, NULL, true);
-
-                if (errinf.level==el_broken) worsterror=max(worsterror, e_invalid);
-                if (errinf.level==el_notthis) worsterror=max(worsterror, e_no_auto);
-                if (errinf.level==el_warning) worsterror=max(worsterror, e_warning);
-                if (errinf.level<el_notthis) anySuccess=true;
-                else canUseFoundRom=false;
-                }
-            multi_auto_next:
-                delete patch;
-                thisPatchName=wcschr(thisPatchName, '\0')+1;
-            }
-            if (anySuccess)
-            {
-                if (worsterror==e_no_auto && foundRom && canUseFoundRom && !usingFoundRom)
-                {
-                    usingFoundRom=true;
-                    goto redo;
-                }
-                int severity=(worsterror==e_none ? el_ok : el_warning);
-                MessageBoxW(hwndMain, messages[worsterror], ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[severity]);
-                return severity;
-            }
-        }
-        WCHAR inromname[MAX_PATH];
-        inromname[0]='\0';
-        if (!SelectRom(inromname, TEXT("选择要打补丁的文件"), false)) return 0;
-        WCHAR thisFileNameWithPath[MAX_PATH];
-        wcscpy(thisFileNameWithPath, patchnames);
-        LPWSTR thisFileName=wcschr(thisFileNameWithPath, '\0');
-        *thisFileName='\\';
-        thisFileName++;
-        LPWSTR thisPatchName=wcschr(patchnames, '\0')+1;
-        LPCWSTR romExtension=GetExtension(inromname);
-        filemap* inrommap=filemap::create(inromname);
-        struct mem inrom=inrommap->get();
-        bool anySuccess=false;
-        enum { e_none, e_notice, e_warning, e_invalid_this, e_invalid, e_io_write, e_io_read, e_io_read_rom } worsterror=e_none;
-        enum errorlevel severity[2][8]={
-                 { el_ok,  el_ok,  el_warning,el_broken,      el_broken,  el_broken, el_broken, el_broken },
-                 { el_ok,  el_ok,  el_warning,el_warning,     el_warning, el_warning,el_warning,el_broken },
-            };
-        LPCWSTR messages[2][8]={
-                {
-                    //no error-free
-                    NULL,//e_none
-                    NULL,//e_notice
-                    NULL,//e_warning
-                    L"选择的补丁文件均非此 ROM 的有效补丁!",//e_invalid_this
-                    L"选择的补丁文件均无效!",//e_invalid
-                    L"无法写入任何 ROM 文件!",//e_io_write
-                    L"无法读取任何补丁文件!",//e_io_read
-                    L"无法读取输入的 ROM 文件",//e_io_read_rom
-                },{
-                    //at least one error-free
-                    L"所有补丁均应用成功!",//e_none
-                    L"所有补丁均应用成功!",//e_notice
-                    L"所有补丁已应用, 但一个或多个补丁可能已损坏或创建不当...",//e_warning
-                    L"部分补丁已应用, 但并非所有给定的补丁都对当前 ROM 文件有效...",//e_invalid_this
-                    L"部分补丁已应用, 但并非所有给定的补丁都有效...",//e_invalid
-                    L"部分补丁已应用, 但并非所有请求输出的 ROM 都已创建成功...",//e_io_write
-                    L"部分补丁已应用, 但并非所有给定的补丁都可被读取...",//e_io_read
-                    NULL,//e_io_read_rom
-                },
-            };
-        if (inrom.ptr)
-        {
-            bool removeheaders=shouldRemoveHeader(inromname, inrom.len);
-            while (*thisPatchName)
-            {
-                wcscpy(thisFileName, thisPatchName);
-                file* patch = file::create(thisFileNameWithPath);
-                if (patch)
-                {
-                    LPWSTR patchExtension=GetExtension(thisFileName);
-                    wcscpy(patchExtension, romExtension);
-                    struct errorinfo errinf=ApplyPatchMem2(patch, inrom, removeheaders, true, thisFileNameWithPath, NULL);
-
-                    if (errinf.level==el_broken) worsterror=max(worsterror, e_invalid);
-                    if (errinf.level==el_notthis) worsterror=max(worsterror, e_invalid_this);
-                    if (errinf.level==el_warning) worsterror=max(worsterror, e_warning);
-                    if (errinf.level<el_notthis)
-                    {
-                        if (state.enableAutoRomSelector && !anySuccess) AddToRomList(patch, inromname);
-                        anySuccess=true;
-                    }
-                    delete patch;
-                }
-                else worsterror=max(worsterror, e_io_read);
-                thisPatchName=wcschr(thisPatchName, '\0')+1;
-            }
-        }
-        else worsterror=e_io_read_rom;
-        delete inrommap;
-        MessageBoxW(hwndMain, messages[anySuccess][worsterror], ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[severity[anySuccess][worsterror]]);
-        return severity[anySuccess][worsterror];
-#undef max
     }
 }
 
@@ -462,10 +311,12 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
     RegisterClassA(&wc);
 
     MSG msg;
-    hwndMain=CreateWindowA(
-                "flips", flipsversion,
-                WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
-                CW_USEDEFAULT, CW_USEDEFAULT, 240 * scaleFactor, 70 * scaleFactor, NULL, NULL, GetModuleHandle(NULL), NULL);
+    hwndMain = CreateWindowA(
+               "flips", flipsversion,
+               WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
+               CW_USEDEFAULT, CW_USEDEFAULT, 240 * scaleFactor, 70 * scaleFactor, NULL, NULL,
+               GetModuleHandle(NULL), NULL);
+    CenterWindow(hwndMain);
 
     HFONT hfont=try_create_font("Segoe UI", 9);
     if (!hfont) hfont=try_create_font("MS Shell Dlg 2", 8);

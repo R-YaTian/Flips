@@ -1,0 +1,84 @@
+#This script creates a debug-optimized binary by default. If you're on Linux, you'll get a faster binary from make-linux.sh.
+
+SRCDIR := $(abspath $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
+
+CFLAGS_windows_base := -DFLIPS_WINDOWS_SFP -DFLIPS_WINDOWS
+CFLAGS_windows_gcc := -mwindows -lgdi32 -lcomdlg32 -lcomctl32 -luser32 -lkernel32 -lshell32 -ladvapi32
+CFLAGS_windows := $(CFLAGS_windows_base) $(CFLAGS_windows_gcc)
+LFLAGS_windows_msvc := gdi32.lib comdlg32.lib comctl32.lib user32.lib kernel32.lib shell32.lib advapi32.lib
+CFLAGS_cli := -DFLIPS_CLI
+
+CFLAGS_G = -fno-rtti -fno-exceptions -DNDEBUG -Wall
+
+FNAME_windows := flips_sfp.exe
+
+CXX ?= g++
+CFLAGS ?= -g
+PKG_CONFIG ?= pkg-config
+
+XFILES :=
+
+SOURCES := $(SRCDIR)/*.cpp
+
+PREFIX ?= /usr
+BINDIR ?= $(PREFIX)/bin
+DATAROOTDIR ?= $(PREFIX)/share
+DATADIR ?= $(DATAROOTDIR)
+
+ifeq ($(TARGET),win)
+  override TARGET := windows
+endif
+
+ifeq ($(TARGET),)
+  targetmachine := $(shell $(CXX) -dumpmachine)
+  ifneq ($(findstring mingw,$(targetmachine)),)
+    TARGET := windows
+  else
+    TARGET :=
+  endif
+endif
+
+ifeq ($(TARGET),)
+  uname := $(shell uname -a)
+  ifeq ($(uname),)
+    TARGET := windows
+  else ifneq ($(findstring CYGWIN,$(uname)),)
+    TARGET := windows
+  endif
+endif
+
+COMMIT_COUNT := $(shell git rev-list --count chs)
+ifneq ($(COMMIT_COUNT),)
+  CFLAGS_G += -DFLIPS_COMMIT_COUNT=$(COMMIT_COUNT)
+endif
+
+ifeq ($(TARGET),windows)
+  ifneq (,$(filter $(CXX),cl cl.exe))
+    override CFLAGS_windows := $(CFLAGS_windows_base)
+    LFLAGS += $(LFLAGS_windows_msvc)
+  endif
+endif
+
+all: $(FNAME_$(TARGET))
+obj:
+	mkdir obj
+clean: | obj
+	rm obj/* || true
+
+ifeq ($(TARGET),windows)
+  XFILES += obj/rc.o
+obj/rc.o: flips.rc flips.h | obj
+	windres flips.rc obj/rc.o
+endif
+
+MOREFLAGS := $(CFLAGS_$(TARGET))
+
+DIVSUF := $(SRCDIR)/libdivsufsort-2.0.1
+SOURCES += $(DIVSUF)/lib/divsufsort.c $(DIVSUF)/lib/sssort.c $(DIVSUF)/lib/trsort.c
+MOREFLAGS += -I$(DIVSUF)/include -DHAVE_CONFIG_H -D__STDC_FORMAT_MACROS
+
+$(FNAME_$(TARGET)): $(SOURCES) $(XFILES)
+	$(CXX) $^ -std=c++23 $(CFLAGS_G) $(MOREFLAGS) $(CPPFLAGS) $(CFLAGS) $(CXXFLAGS) $(LFLAGS) -o$@
+ifeq ($(CFLAGS),-g)
+	echo 'Compiled Floating IPS in debug mode; for better performance, use ./make-linux.sh instead'
+endif

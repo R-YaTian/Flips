@@ -71,6 +71,7 @@
                 "UNICODE",
                 "_UNICODE"
             ],
+            "compileCommands": "${workspaceFolder}/.vscode/compile_commands.json",
             "intelliSenseMode": "msvc-x64",
             "browse": {
                 "path": [

@@ -9,39 +9,48 @@
 #include <locale>
 #include <string>
 #include <windows.h>
+#include <fstream>
+#include <imagehlp.h>
 
 // Get Desktop DPI (Windows 7+)
 int GetDesktopDpi() {
-    HDC hdc = GetDC(NULL);
-    int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
-    ReleaseDC(NULL, hdc);
-    return dpi;
+	HDC hdc = GetDC(NULL);
+	int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+	ReleaseDC(NULL, hdc);
+	return dpi;
 }
 
 double GetDpiScaleFactor() {
-    int dpi = GetDesktopDpi();
-    return dpi / 96.0;  // 96 DPI = 1.0
+	int dpi = GetDesktopDpi();
+	return dpi / 96.0;  // 96 DPI = 1.0
 }
 
 std::string Utf8ToAnsi(const char* utf8Str) {
-    int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
-    if (wideLen <= 0) return "";
+	int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
+	if (wideLen <= 0) return "";
 
-    std::wstring wideStr(wideLen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, &wideStr[0], wideLen);
+	std::wstring wideStr(wideLen, L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, &wideStr[0], wideLen);
 
-    int ansiLen = WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, NULL, 0, NULL, NULL);
-    if (ansiLen <= 0) return "";
+	int ansiLen = WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, NULL, 0, NULL, NULL);
+	if (ansiLen <= 0) return "";
 
-    std::string ansiStr(ansiLen, '\0');
-    WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, &ansiStr[0], ansiLen, NULL, NULL);
+	std::string ansiStr(ansiLen, '\0');
+	WideCharToMultiByte(CP_ACP, 0, wideStr.c_str(), -1, &ansiStr[0], ansiLen, NULL, NULL);
 
-    return ansiStr;
+	return ansiStr;
 }
 
 std::wstring ConvertUtf8ToWstring(const std::string& utf8Str) {
-    std::wstring wstr(utf8Str.begin(), utf8Str.end());
-    return wstr;
+	std::wstring wstr(utf8Str.begin(), utf8Str.end());
+	return wstr;
+}
+
+std::string WStringToAnsi(LPCWSTR wstr) {
+	int size_needed = WideCharToMultiByte(CP_ACP, 0, wstr, -1, NULL, 0, NULL, NULL);
+	std::string str(size_needed - 1, 0);
+	WideCharToMultiByte(CP_ACP, 0, wstr, -1, &str[0], size_needed, NULL, NULL);
+	return str;
 }
 
 double scaleFactor = 1.0;
@@ -88,7 +97,6 @@ public:
 file* file::create(LPCWSTR filename) { return file_w32::create(filename); }
 bool file::exists(LPCWSTR filename) { return GetFileAttributes(filename) != INVALID_FILE_ATTRIBUTES; }
 
-
 class filewrite_w32 : public filewrite {
 	HANDLE io;
 	
@@ -114,13 +122,102 @@ public:
 };
 
 filewrite* filewrite::create(LPCWSTR filename) { return filewrite_w32::create(filename); }
-
-
-//TODO: implement properly
-//also ensure input==output works if implementing this, rather than getting a file sharing violation
-//applies even when selecting multiple patches, of which one overwrites input
 filemap* filemap::create(LPCWSTR filename) { return filemap::create_fallback(filename); }
 
+void UpdateChecksum(const char* filePath) {
+    DWORD headerSum, checkSum;
+    if (MapFileAndCheckSumA(filePath, &headerSum, &checkSum) == CHECKSUM_SUCCESS) {
+        HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD bytesRead;
+            IMAGE_DOS_HEADER dosHeader;
+            ReadFile(hFile, &dosHeader, sizeof(dosHeader), &bytesRead, NULL);
+
+            SetFilePointer(hFile, dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), NULL, FILE_BEGIN);
+
+            IMAGE_OPTIONAL_HEADER32 optHeader;
+            ReadFile(hFile, &optHeader, sizeof(optHeader), &bytesRead, NULL);
+            optHeader.CheckSum = checkSum;
+
+            SetFilePointer(hFile, dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), NULL, FILE_BEGIN);
+            WriteFile(hFile, &optHeader, sizeof(optHeader), &bytesRead, NULL);
+            CloseHandle(hFile);
+        }
+    }
+}
+
+void UpdatePeHeader(const char* filePath, DWORD additionalSize) {
+    HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+	// PE Header
+    DWORD peOffset;
+    SetFilePointer(hFile, 0x3C, NULL, FILE_BEGIN);
+    ReadFile(hFile, &peOffset, sizeof(peOffset), NULL, NULL);
+
+    // Get Section num
+    WORD numSections;
+    SetFilePointer(hFile, peOffset + 6, NULL, FILE_BEGIN);
+    ReadFile(hFile, &numSections, sizeof(numSections), NULL, NULL);
+
+    // Go to last Section
+    DWORD sectionTableOffset = peOffset + 0xF8;
+    DWORD lastSectionOffset = sectionTableOffset + (numSections - 1) * 40;
+
+    // Get current SizeOfRawData
+    DWORD sizeOfRawData;
+    SetFilePointer(hFile, lastSectionOffset + 16, NULL, FILE_BEGIN);
+    ReadFile(hFile, &sizeOfRawData, sizeof(sizeOfRawData), NULL, NULL);
+
+    // Get PointerToRawData
+    DWORD pointerToRawData;
+    SetFilePointer(hFile, lastSectionOffset + 20, NULL, FILE_BEGIN);
+    ReadFile(hFile, &pointerToRawData, sizeof(pointerToRawData), NULL, NULL);
+
+    // Calc new SizeOfRawData
+    DWORD actualSize = GetFileSize(hFile, NULL);
+    DWORD newSizeOfRawData = actualSize - pointerToRawData;
+
+    // Update SizeOfRawData
+    SetFilePointer(hFile, lastSectionOffset + 16, NULL, FILE_BEGIN);
+    WriteFile(hFile, &newSizeOfRawData, sizeof(newSizeOfRawData), NULL, NULL);
+
+    // Update CheckSum
+    CloseHandle(hFile);
+    UpdateChecksum(filePath);
+}
+
+void LoadResourceAndMerge(const std::string& patchFilePath, const std::string& outputFilePath) {
+	HMODULE hModule = GetModuleHandle(NULL);
+	HRSRC hRes = FindResource(hModule, MAKEINTRESOURCE(3), RT_RCDATA);
+	if (!hRes)
+	{
+		MessageBox(NULL, TEXT("获取自释放补丁模块失败"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	HGLOBAL hGlobal = LoadResource(hModule, hRes);
+	if (!hGlobal)
+	{
+		MessageBox(NULL, TEXT("自释放补丁模块读取失败"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	DWORD size = SizeofResource(hModule, hRes);
+	const void* data = LockResource(hGlobal);
+
+	std::ifstream patchFile(patchFilePath, std::ios::binary);
+	std::ofstream outFile(outputFilePath, std::ios::binary);
+	outFile.write(reinterpret_cast<const char*>(data), size);
+	outFile << patchFile.rdbuf();
+	outFile.write(reinterpret_cast<const char*>(&size), 4);
+	outFile.close();
+
+	UpdatePeHeader(outputFilePath.c_str(), 0);
+	MessageBox(NULL, TEXT("EXE 自释放补丁程序生成完毕!"), TEXT("提示"), MB_OK);
+}
 
 HWND hwndMain=NULL;
 HWND hwndSettings=NULL;
@@ -135,8 +232,10 @@ struct {
 	int windowleft;
 	int windowtop;
 } static state;
+
 #define mycfgversion 2
 WCHAR * st_emulator=NULL;
+
 void set_st_emulator_len(LPCWSTR newemu, int len)
 {
 	free(st_emulator);
@@ -151,7 +250,6 @@ void set_st_emulator(LPCWSTR newemu)
 
 HWND hwndProgress;
 LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
 bool bpsdCancel;
 
 void bpsdeltaBegin()
@@ -673,7 +771,7 @@ void a_ShowSettings()
 	do { \
 		int thisy=y+(lineheight-h)/2; \
 		item=CreateWindowW(type, text, WS_CHILD|WS_TABSTOP|WS_VISIBLE|style, \
-		                   x, thisy, w, h, hwndSettings, (HMENU)(action), GetModuleHandle(NULL), NULL); \
+						   x, thisy, w, h, hwndSettings, (HMENU)(action), GetModuleHandle(NULL), NULL); \
 		SendMessage(item, WM_SETFONT, (WPARAM)hfont, 0); \
 		x+=w+6; \
 	} while(0)
@@ -821,6 +919,97 @@ void a_AssignFileTypes(bool checkKey, bool deleteKey)
 	}
 }
 
+bool saveAsExe(LPWSTR exePath)
+{
+	OPENFILENAME ofn;
+	ZeroMemory(&ofn, sizeof(ofn));
+	ofn.lStructSize=sizeof(ofn);
+	ofn.hwndOwner=hwndMain;
+	ofn.lpstrFilter=TEXT("可执行程序 (*.exe)\0*.exe\0");
+	ofn.lpstrFile=exePath;
+	ofn.nMaxFile=MAX_PATH;
+	ofn.nFilterIndex=0;
+	ofn.lpstrTitle=L"文件另存为";
+	ofn.Flags=OFN_PATHMUSTEXIST|OFN_HIDEREADONLY|OFN_OVERWRITEPROMPT;
+	ofn.lpstrDefExt=TEXT("exe");
+	if (!GetSaveFileName(&ofn)) return false;
+	return true;
+}
+
+void a_IpsToExe()
+{
+	WCHAR exename[MAX_PATH], patchPath[MAX_PATH];
+	*exename = '\0';
+	*patchPath = '\0';
+
+	OPENFILENAME ofn;
+	ZeroMemory(&ofn, sizeof(ofn));
+	ofn.lStructSize=sizeof(ofn);
+	ofn.hwndOwner=hwndMain;
+	ofn.lpstrFilter=TEXT("IPS 补丁文件 (*.ips)\0*.ips\0");
+	ofn.lpstrFile=patchPath;
+	ofn.nMaxFile=MAX_PATH;
+	ofn.lpstrTitle=TEXT("选择要转换的补丁文件");
+	ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
+	ofn.lpstrDefExt=TEXT("ips");
+
+	if (!GetOpenFileName(&ofn)) return;
+
+	file* patch = file::create(patchPath);
+	if (!patch)
+	{
+		MessageBox(hwndMain, TEXT("无法打开补丁文件"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	if (IdentifyPatch(patch) != ty_ips)
+	{
+		MessageBox(hwndMain, TEXT("补丁文件不是有效的 IPS 格式"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	delete patch;
+	if (!saveAsExe(exename)) return;
+	LoadResourceAndMerge(WStringToAnsi(patchPath), WStringToAnsi(exename));
+}
+
+void a_BpsToExe()
+{
+	WCHAR exename[MAX_PATH], patchPath[MAX_PATH];
+	*exename = '\0';
+	*patchPath = '\0';
+
+	OPENFILENAME ofn;
+	ZeroMemory(&ofn, sizeof(ofn));
+	ofn.lStructSize=sizeof(ofn);
+	ofn.hwndOwner=hwndMain;
+	ofn.lpstrFilter=TEXT("BPS 补丁文件 (*.bps)\0*.bps\0");
+	ofn.lpstrFile=patchPath;
+	ofn.nMaxFile=MAX_PATH;
+	ofn.lpstrTitle=TEXT("选择要转换的补丁文件");
+	ofn.Flags=OFN_HIDEREADONLY|OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
+	ofn.lpstrDefExt=TEXT("bps");
+
+	if (!GetOpenFileName(&ofn)) return;
+
+	file* patch = file::create(patchPath);
+	if (!patch)
+	{
+		MessageBox(hwndMain, TEXT("无法打开补丁文件"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	if (IdentifyPatch(patch) != ty_bps)
+	{
+		MessageBox(hwndMain, TEXT("补丁文件不是有效的 BPS 格式"), TEXT("错误"), MB_OK|MB_ICONERROR);
+		return;
+	}
+
+	delete patch;
+	if (!saveAsExe(exename)) return;
+	LoadResourceAndMerge(WStringToAnsi(patchPath), WStringToAnsi(exename));
+}
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
@@ -831,6 +1020,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (wParam==2) a_CreatePatch();
 			if (wParam==3) a_ApplyRun(NULL);
 			if (wParam==4) a_ShowSettings();
+			if (wParam==5) a_IpsToExe();
+			if (wParam==6) a_BpsToExe();
 			
 			if (wParam==101) a_SetEmulator();
 			if (wParam==102) a_AssignFileTypes(assocStatus ? true : false, assocStatus);
@@ -866,9 +1057,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 static HFONT try_create_font(const char * name, int size)
 {
 	return CreateFontA(-size*96/72 * scaleFactor, 0, 0, 0, FW_NORMAL,
-	                   FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-	                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH|FF_DONTCARE,
-	                   name);
+					   FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+					   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH|FF_DONTCARE,
+					   name);
 }
 
 int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
@@ -891,7 +1082,7 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	hwndMain=CreateWindowA(
 				"flips", flipsversion,
 				WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
-				state.windowleft, state.windowtop, 240 * scaleFactor, 93 * scaleFactor, NULL, NULL, GetModuleHandle(NULL), NULL);
+				state.windowleft, state.windowtop, 240 * scaleFactor, 124 * scaleFactor, NULL, NULL, GetModuleHandle(NULL), NULL);
 	
 	HFONT hfont=try_create_font("Segoe UI", 9);
 	if (!hfont) hfont=try_create_font("MS Shell Dlg 2", 8);
@@ -910,6 +1101,8 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	button(122 * scaleFactor, 6 * scaleFactor,  90 * scaleFactor, 23 * scaleFactor, L"创建补丁");
 	button(24 * scaleFactor, 37 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"应用并运行");
 	button(122 * scaleFactor, 37 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"设定");
+	button(24 * scaleFactor, 68 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"IPS转EXE");
+	button(122 * scaleFactor, 68 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"BPS转EXE");
 	
 	ShowWindow(hwndMain, nCmdShow);
 	

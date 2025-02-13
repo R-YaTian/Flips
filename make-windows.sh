@@ -31,12 +31,12 @@ $WINE ./flips.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profi
 $WINE ./flips_sfp.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 $WINE ./flips_sfp.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 echo 'Windows (3/3)'
-rm flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS_SFP -fprofile-use -s --static"
-rm flips.exe; $MAKE CFLAGS="$FLAGS_PRI -fprofile-use -s --static"
+rm obj_sfp/rc.o flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS_SFP -fprofile-use -s --static"
+rm obj/rc.o flips.exe; $MAKE CFLAGS="$FLAGS_PRI -fprofile-use -s --static"
 
 #verify that there are no unexpected dependencies
 objdump -p flips.exe | grep 'DLL Name' | \
-	grep -Pvi '(msvcrt|advapi32|comctl32|comdlg32|gdi32|kernel32|shell32|user32|api-ms-win-crt|libgcc_s_dw2-1.dll)' && \
+	grep -Pvi '(msvcrt|advapi32|comctl32|comdlg32|gdi32|kernel32|shell32|user32|api-ms-win-crt|libgcc_s_dw2-1.dll|IMAGEHLP.DLL)' && \
 	echo "Invalid dependency" && exit 1
 
 # a script's exit status is the same as the last command or pipeline run; if that's the above grep, things break

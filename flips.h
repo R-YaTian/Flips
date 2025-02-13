@@ -291,6 +291,7 @@ void GUILoadConfig();
 //LPCWSTR GUIGetFileFor(uint32_t crc32); // use FindRomForPatch instead
 #ifdef FLIPS_WINDOWS
 void GUIClaimConsole();
+enum patchtype IdentifyPatch(file* patch);
 #else
 #define GUIClaimConsole() // all other platforms have consoles already
 #endif

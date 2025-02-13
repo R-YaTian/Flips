@@ -4,7 +4,7 @@ SRCDIR := $(abspath $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))
 
 CFLAGS_gtk = -DFLIPS_GTK $(GTKFLAGS) $(GTKLIBS)
 CFLAGS_windows_base := -DFLIPS_WINDOWS
-CFLAGS_windows_gcc := -mwindows -lgdi32 -lcomdlg32 -lcomctl32 -luser32 -lkernel32 -lshell32 -ladvapi32
+CFLAGS_windows_gcc := -mwindows -lgdi32 -lcomdlg32 -lcomctl32 -luser32 -lkernel32 -lshell32 -ladvapi32 -limagehlp
 CFLAGS_windows := $(CFLAGS_windows_base) $(CFLAGS_windows_gcc)
 LFLAGS_windows_msvc := gdi32.lib comdlg32.lib comctl32.lib user32.lib kernel32.lib shell32.lib advapi32.lib
 CFLAGS_cli := -DFLIPS_CLI

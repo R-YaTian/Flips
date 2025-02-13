@@ -221,7 +221,7 @@ bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)
 	ZeroMemory(&ofn, sizeof(ofn));
 	ofn.lStructSize=sizeof(ofn);
 	ofn.hwndOwner=hwndMain;
-	ofn.lpstrFilter=TEXT("选择常见 ROM 文件\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64\0所有文件 (*.*)\0*.*\0");
+	ofn.lpstrFilter=TEXT("选择常见 ROM 文件\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64;*.bin\0所有文件 (*.*)\0*.*\0");
 	ofn.lpstrFile=filename;
 	ofn.nMaxFile=MAX_PATH;
 	ofn.nFilterIndex=state.lastRomType;

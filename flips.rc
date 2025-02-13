@@ -3,6 +3,9 @@
 0 ICON DISCARDABLE "flips.ico"
 1 ICON DISCARDABLE "ips.ico"
 2 ICON DISCARDABLE "bps.ico"
+#if !FLIPS_WINDOWS_SFP
+3 RCDATA  "flips_sfp.exe"
+#endif
 1 24 "flips.Manifest"
 
 VS_VERSION_INFO VERSIONINFO

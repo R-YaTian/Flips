@@ -61,14 +61,14 @@ endif
 
 all: $(FNAME_$(TARGET))
 obj:
-	mkdir obj
+	mkdir obj_sfp
 clean: | obj
-	rm obj/* || true
+	rm obj_sfp/* || true
 
 ifeq ($(TARGET),windows)
-  XFILES += obj/rc.o
-obj/rc.o: flips.rc flips.h | obj
-	windres flips.rc obj/rc.o
+  XFILES += obj_sfp/rc.o
+obj_sfp/rc.o: flips.rc flips.h | obj
+	windres -DFLIPS_WINDOWS_SFP=1 flips.rc obj_sfp/rc.o
 endif
 
 MOREFLAGS := $(CFLAGS_$(TARGET))

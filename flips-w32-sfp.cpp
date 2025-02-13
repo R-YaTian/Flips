@@ -44,6 +44,7 @@ double scaleFactor = 1.0;
 
 class file_w32 : public file {
     size_t size;
+    size_t offset;
     HANDLE io;
 
 public:
@@ -58,11 +59,13 @@ private:
     file_w32(HANDLE io, uint32_t sizetsize) : io(io)
     {
         size = GetFileSize(io, NULL);
+        offset = 0;
     }
 
     file_w32(HANDLE io, uint64_t sizetsize) : io(io)
     {
         GetFileSizeEx(io, (PLARGE_INTEGER)&size);
+        offset = 0;
     }
 
 public:
@@ -71,10 +74,20 @@ public:
     bool read(uint8_t* target, size_t start, size_t len)
     {
         OVERLAPPED ov = {0};
-        ov.Offset = start;
-        ov.OffsetHigh = start>>16>>16;
+        ov.Offset = start + offset;
+        ov.OffsetHigh = ov.Offset >> 16 >> 16;
         DWORD actuallen;
         return (ReadFile(io, target, len, &actuallen, &ov) && len==actuallen);
+    }
+
+    void findPatchOffset()
+    {
+        uint8_t buffer[4] = {0};
+        read(buffer, size - 4, 4);
+        uint32_t addr;
+        addr = buffer[0] | (buffer[1] << 8) | (buffer[2] << 16) | (buffer[3] << 24);
+        offset = addr;
+        size = size - addr - 4;
     }
 
     ~file_w32() { CloseHandle(io); }
@@ -108,82 +121,13 @@ public:
 };
 
 filewrite* filewrite::create(LPCWSTR filename) { return filewrite_w32::create(filename); }
-
-//TODO: implement properly
-//also ensure input==output works if implementing this, rather than getting a file sharing violation
-//applies even when selecting multiple patches, of which one overwrites input
 filemap* filemap::create(LPCWSTR filename) { return filemap::create_fallback(filename); }
 
 HWND hwndMain=NULL;
 
-struct {
-    unsigned char lastRomType;
-} static state;
-
-HWND hwndProgress;
-bool bpsdCancel;
-LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-void bpsdeltaBegin()
-{
-    bpsdCancel=false;
-    RECT mainwndpos;
-    GetWindowRect(hwndMain, &mainwndpos);
-    hwndProgress=CreateWindowA(
-                        "flips", flipsversion,
-                        WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER,
-                        mainwndpos.left + 53 * scaleFactor, mainwndpos.top + 27 * scaleFactor,
-                        101 * scaleFactor, 39 * scaleFactor, hwndMain, NULL, GetModuleHandle(NULL), NULL);
-    SetWindowLongPtrA(hwndProgress, GWLP_WNDPROC, (LONG_PTR)bpsdProgressWndProc);
-
-    ShowWindow(hwndProgress, SW_SHOW);
-    EnableWindow(hwndMain, FALSE);
-
-    bpsdeltaProgress(NULL, 0, 1);
-}
-
-bool bpsdeltaProgress(void* userdata, size_t done, size_t total)
-{
-    if (!bpsdeltaGetProgress(done, total)) return !bpsdCancel;
-    if (hwndProgress) InvalidateRect(hwndProgress, NULL, false);
-    MSG Msg;
-    while (PeekMessage(&Msg, NULL, 0, 0, PM_REMOVE)) DispatchMessage(&Msg);
-    return !bpsdCancel;
-}
-
-LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-    switch (uMsg)
-    {
-    case WM_ERASEBKGND: return TRUE;
-    case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            RECT rc;
-            BeginPaint(hwnd, &ps);
-            GetClientRect(hwnd, &rc);
-            FillRect(ps.hdc, &rc, GetSysColorBrush(COLOR_3DFACE));
-            SetBkColor(ps.hdc, GetSysColor(COLOR_3DFACE));
-            SelectObject(ps.hdc, (HFONT)GetStockObject(DEFAULT_GUI_FONT));
-            DrawTextA(ps.hdc, bpsdProgStr, -1, &rc, DT_CENTER | DT_NOCLIP);
-            EndPaint(hwnd, &ps);
-        }
-        break;
-    case WM_CLOSE:
-        bpsdCancel=true;
-        break;
-    default:
-        return DefWindowProcA(hwnd, uMsg, wParam, lParam);
-    }
-    return 0;
-}
-
-void bpsdeltaEnd()
-{
-    EnableWindow(hwndMain, TRUE);
-    DestroyWindow(hwndProgress);
-    hwndProgress=NULL;
-}
+void bpsdeltaBegin() { return; }
+bool bpsdeltaProgress(void* userdata, size_t done, size_t total) { return false; }
+void bpsdeltaEnd() { return; }
 
 bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)
 {
@@ -191,75 +135,90 @@ bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize=sizeof(ofn);
     ofn.hwndOwner=hwndMain;
-    ofn.lpstrFilter=TEXT("选择常见 ROM 文件\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64\0所有文件 (*.*)\0*.*\0");
+    ofn.lpstrFilter=TEXT("选择常见 ROM 文件\0*.smc;*.sfc;*.nes;*.gb;*.gbc;*.gba;*.nds;*.vb;*.sms;*.smd;*.md;*.ngp;*.n64;*.z64;*.bin\0所有文件 (*.*)\0*.*\0");
     ofn.lpstrFile=filename;
     ofn.nMaxFile=MAX_PATH;
-    ofn.nFilterIndex=state.lastRomType;
+    ofn.nFilterIndex=0;
     ofn.lpstrTitle=title;
     ofn.Flags=OFN_PATHMUSTEXIST|(output?OFN_HIDEREADONLY|OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
     ofn.lpstrDefExt=TEXT("smc");
     if (!output && !GetOpenFileName(&ofn)) return false;
     if ( output && !GetSaveFileName(&ofn)) return false;
-    state.lastRomType=ofn.nFilterIndex;
     return true;
 }
 
-UINT mboxtype[]={ MB_OK, MB_OK, MB_OK|MB_ICONWARNING, MB_OK|MB_ICONWARNING, MB_OK|MB_ICONERROR, MB_OK|MB_ICONERROR };
+UINT mboxtype[] = { MB_OK, MB_OK, MB_OK|MB_ICONWARNING, MB_OK|MB_ICONWARNING, MB_OK|MB_ICONERROR, MB_OK|MB_ICONERROR };
 
-LPCWSTR patchextensions[]={
+LPCWSTR patchextensions[] = {
     NULL,//unused, ty_null
     TEXT("bps"),
     TEXT("ips"),
 };
 
-int a_ApplyPatch(LPCWSTR clipatchname)
+int a_ApplyPatch(LPCWSTR inromname)
 {
-    WCHAR patchnames[65536];
-    patchnames[0]='\0';
-    bool multiplePatches;
-    if (clipatchname)
-    {
-        wcscpy(patchnames, clipatchname);
-    }
-    else
-    {
-    }
+    WCHAR selfPath[MAX_PATH];
+    GetModuleFileNameW(NULL, selfPath, MAX_PATH);
 
-    //get rom name and apply
+    file* patch = file::create(selfPath);
+    file_w32* fPtr = static_cast<file_w32*>(patch);
+    fPtr->findPatchOffset();
 
-    if (!multiplePatches)
+    if (patch)
     {
-        file* patch = file::create(patchnames);
-        if (patch)
-        {
-
         WCHAR inromname_buf[MAX_PATH];
-        LPCWSTR inromname = NULL;
-        inromname=inromname_buf;
-        inromname_buf[0]='\0';
-        if (!SelectRom(inromname_buf, TEXT("选择要打补丁的文件"), false)) goto cancel;
+        if (!inromname)
+        {
+            inromname = inromname_buf;
+            inromname_buf[0] = '\0';
+            if (!SelectRom(inromname_buf, TEXT("选择要打补丁的文件"), false))
+            {
+                delete patch;
+                return 0;
+            }
+        }
 
         WCHAR outromname[MAX_PATH];
         wcscpy(outromname, inromname);
-        LPWSTR outrompath=GetBaseName(outromname);
-        LPWSTR patchpath=GetBaseName(patchnames);
+        LPWSTR outrompath = GetBaseName(outromname);
+        LPWSTR patchpath = GetBaseName(selfPath);
         if (outrompath && patchpath)
         {
             wcscpy(outrompath, patchpath);
-            LPWSTR outromext=GetExtension(outrompath);
-            LPWSTR inromext=GetExtension(inromname);
+            LPWSTR outromext = GetExtension(outrompath);
+            LPWSTR inromext = GetExtension(inromname);
             if (*inromext && *outromext) wcscpy(outromext, inromext);
         }
-        if (!SelectRom(outromname, TEXT("选择输出文件"), true)) goto cancel;
-        struct errorinfo errinf=ApplyPatchMem(patch, inromname, true, outromname, NULL, false);
-        delete patch;
-        MessageBoxA(hwndMain, errinf.description, flipsversion, mboxtype[errinf.level]);
-        return errinf.level;
+        if (!SelectRom(outromname, TEXT("选择输出文件"), true))
+        {
+            delete patch;
+            return 0;
         }
-    cancel:
+        struct errorinfo errinf = ApplyPatchMem(patch, inromname, true, outromname, NULL, false);
         delete patch;
-        return 0;
+        MessageBoxA(hwndMain, errinf.description, "Flips-sfp", mboxtype[errinf.level]);
+        return errinf.level;
     }
+
+    delete patch;
+    return 0;
+}
+
+void a_ShowAbout()
+{
+    WCHAR selfPath[MAX_PATH];
+    GetModuleFileNameW(NULL, selfPath, MAX_PATH);
+    LPWSTR fname = GetBaseName(selfPath);
+    size_t len = wcslen(fname);
+    if (wcslen(fname) > 4) fname[len - 4] = L'\0';
+
+    MessageBoxW(hwndMain,
+                L"Flips-sfp 模块是自释放式的补丁程序\n"
+                "补丁数据已内置于该可执行文件内部\n"
+                "该自释放补丁程序由 Flips 简体加强版生成\n"
+                "程序作者: R-YaTian",
+                fname,
+                MB_ICONINFORMATION);
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -269,7 +228,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
         {
             if (wParam==1) a_ApplyPatch(NULL);
-            if (wParam==2) break;
+            if (wParam==2) a_ShowAbout();
         }
         break;
     case WM_CLOSE:
@@ -312,9 +271,9 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 
     MSG msg;
     hwndMain = CreateWindowA(
-               "flips", flipsversion,
+               "flips", "Flips-sfp",
                WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
-               CW_USEDEFAULT, CW_USEDEFAULT, 240 * scaleFactor, 70 * scaleFactor, NULL, NULL,
+               CW_USEDEFAULT, CW_USEDEFAULT, 240 * scaleFactor, 63 * scaleFactor, NULL, NULL,
                GetModuleHandle(NULL), NULL);
     CenterWindow(hwndMain);
 

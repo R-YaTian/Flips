@@ -91,7 +91,7 @@ clean: | obj
 ifeq ($(TARGET),windows)
   XFILES += obj/rc.o
 obj/rc.o: flips.rc flips.h | obj
-	windres flips.rc obj/rc.o
+	windres -DFLIPS_WINDOWS_SFP=0 flips.rc obj/rc.o
 endif
 
 MOREFLAGS := $(CFLAGS_$(TARGET))

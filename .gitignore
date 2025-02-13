@@ -4,6 +4,7 @@ flips.exe
 flips_sfp.exe
 flipscfg.bin
 
+*.o
 *.obj
 flips.res
 *.pgc

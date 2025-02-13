@@ -6,30 +6,33 @@ export LANG=C.UTF-8
 echo "This script creates a heavily optimized Windows binary. For debugging you're better off using the Makefile directly."
 
 # Set GCC specific optimization flags. These may need to be revisited when the project is build using MVSC.
-FLAGS='-Wall -O3 -flto -fuse-linker-plugin -fomit-frame-pointer -fmerge-all-constants -fvisibility=hidden'
+FLAGS='-Wall -O3 -flto=auto -fuse-linker-plugin -fomit-frame-pointer -fmerge-all-constants -fvisibility=hidden'
 FLAGS=$FLAGS' -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables'
-FLAGS=$FLAGS' -ffunction-sections -fdata-sections -Wl,--gc-sections -fprofile-dir=obj/'
+FLAGS_SFP=$FLAGS' -ffunction-sections -fdata-sections -Wl,--gc-sections -fprofile-dir=obj_sfp/'
+FLAGS_PRI=$FLAGS' -ffunction-sections -fdata-sections -Wl,--gc-sections -fprofile-dir=obj/'
 
 # Can be overridden to build Windows binaries from a Linux host
 # for example WINE=wine MAKE=mingw32-make ./make-windows.sh
 MAKE="${MAKE:-make}"
 WINE="${WINE:-}"
 
-rm floating.zip
-rm -r obj/* || true
+rm -rf obj_sfp || true
+rm -rf obj || true
 
 #if trying to make a 32bit Flips, add -Wl,--large-address-aware
 
 echo 'Windows (1/3)'
-rm -r obj/* flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
-rm -r obj/* flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-generate --static -lgcov"
+rm -rf obj_sfp flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS_SFP -fprofile-generate --static -lgcov"
+rm -rf obj flips.exe; $MAKE CFLAGS="$FLAGS_PRI -fprofile-generate --static -lgcov"
 [ -e flips.exe ] || exit
 echo 'Windows (2/3)'
 $WINE ./flips.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 $WINE ./flips.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
+$WINE ./flips_sfp.exe --create --bps-delta         profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
+$WINE ./flips_sfp.exe --create --bps-delta-moremem profile/firefox-10.0esr.tar profile/firefox-17.0esr.tar /dev/null
 echo 'Windows (3/3)'
-rm flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS -fprofile-use -s --static"
-rm flips.exe; $MAKE CFLAGS="$FLAGS -fprofile-use -s --static"
+rm flips_sfp.exe; $MAKE -f Makefile.sfp CFLAGS="$FLAGS_SFP -fprofile-use -s --static"
+rm flips.exe; $MAKE CFLAGS="$FLAGS_PRI -fprofile-use -s --static"
 
 #verify that there are no unexpected dependencies
 objdump -p flips.exe | grep 'DLL Name' | \

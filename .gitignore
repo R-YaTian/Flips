@@ -2,7 +2,7 @@ obj/
 flips
 flips.exe
 flips_sfp.exe
-flipscfg.bin
+cfg.bin
 
 *.o
 *.obj

@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <fstream>
 #include <imagehlp.h>
+#include <thread>
 
 // Get Desktop DPI (Windows 7+)
 int GetDesktopDpi() {
@@ -23,6 +24,24 @@ int GetDesktopDpi() {
 double GetDpiScaleFactor() {
 	int dpi = GetDesktopDpi();
 	return dpi / 96.0;  // 96 DPI = 1.0
+}
+
+void CenterWindow(HWND hwnd) {
+	RECT rect;
+	GetWindowRect(hwnd, &rect);  // Get current window size
+
+	int windowWidth = rect.right - rect.left;
+	int windowHeight = rect.bottom - rect.top;
+
+	// Get screen size
+	int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+	int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+	// Calc new window position
+	int x = (screenWidth - windowWidth) / 2;
+	int y = (screenHeight - windowHeight) / 2;
+
+	SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 }
 
 std::string Utf8ToAnsi(const char* utf8Str) {
@@ -59,7 +78,7 @@ bool assocStatus = true;
 class file_w32 : public file {
 	size_t size;
 	HANDLE io;
-	
+
 public:
 	static file* create(LPCWSTR filename)
 	{
@@ -67,21 +86,21 @@ public:
 		if (io==INVALID_HANDLE_VALUE) return NULL;
 		return new file_w32(io, (size_t)0);
 	}
-	
+
 private:
 	file_w32(HANDLE io, uint32_t sizetsize) : io(io)
 	{
 		size = GetFileSize(io, NULL);
 	}
-	
+
 	file_w32(HANDLE io, uint64_t sizetsize) : io(io)
 	{
 		GetFileSizeEx(io, (PLARGE_INTEGER)&size);
 	}
-	
+
 public:
 	size_t len() { return size; }
-	
+
 	bool read(uint8_t* target, size_t start, size_t len)
 	{
 		OVERLAPPED ov = {0};
@@ -90,7 +109,7 @@ public:
 		DWORD actuallen;
 		return (ReadFile(io, target, len, &actuallen, &ov) && len==actuallen);
 	}
-	
+
 	~file_w32() { CloseHandle(io); }
 };
 
@@ -99,7 +118,7 @@ bool file::exists(LPCWSTR filename) { return GetFileAttributes(filename) != INVA
 
 class filewrite_w32 : public filewrite {
 	HANDLE io;
-	
+
 public:
 	static filewrite* create(LPCWSTR filename)
 	{
@@ -107,17 +126,17 @@ public:
 		if (!io) return NULL;
 		return new filewrite_w32(io);
 	}
-	
+
 private:
 	filewrite_w32(HANDLE io) : io(io) {}
-	
+
 public:
 	bool append(const uint8_t* data, size_t len)
 	{
 		DWORD truelen;
 		return (WriteFile(io, data, len, &truelen, NULL) && truelen==len);
 	}
-	
+
 	~filewrite_w32() { CloseHandle(io); }
 };
 
@@ -125,68 +144,63 @@ filewrite* filewrite::create(LPCWSTR filename) { return filewrite_w32::create(fi
 filemap* filemap::create(LPCWSTR filename) { return filemap::create_fallback(filename); }
 
 void UpdateChecksum(const char* filePath) {
-    DWORD headerSum, checkSum;
-    if (MapFileAndCheckSumA(filePath, &headerSum, &checkSum) == CHECKSUM_SUCCESS) {
-        HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-        if (hFile != INVALID_HANDLE_VALUE) {
-            DWORD bytesRead;
-            IMAGE_DOS_HEADER dosHeader;
-            ReadFile(hFile, &dosHeader, sizeof(dosHeader), &bytesRead, NULL);
+	DWORD headerSum, checkSum;
+	if (MapFileAndCheckSumA(filePath, &headerSum, &checkSum) == CHECKSUM_SUCCESS) {
+		HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+		if (hFile != INVALID_HANDLE_VALUE) {
+			DWORD bytesRead;
+			IMAGE_DOS_HEADER dosHeader;
+			ReadFile(hFile, &dosHeader, sizeof(dosHeader), &bytesRead, NULL);
 
-            SetFilePointer(hFile, dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), NULL, FILE_BEGIN);
+			// calc checkSumOffset
+			DWORD checkSumOffset = dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER) + offsetof(IMAGE_OPTIONAL_HEADER32, CheckSum);
 
-            IMAGE_OPTIONAL_HEADER32 optHeader;
-            ReadFile(hFile, &optHeader, sizeof(optHeader), &bytesRead, NULL);
-            optHeader.CheckSum = checkSum;
+			// Jump to checkSum position
+			SetFilePointer(hFile, checkSumOffset, NULL, FILE_BEGIN);
 
-            SetFilePointer(hFile, dosHeader.e_lfanew + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), NULL, FILE_BEGIN);
-            WriteFile(hFile, &optHeader, sizeof(optHeader), &bytesRead, NULL);
-            CloseHandle(hFile);
-        }
-    }
+			// Write CheckSum and close
+			WriteFile(hFile, &checkSum, sizeof(checkSum), NULL, NULL);
+			CloseHandle(hFile);
+		}
+	}
 }
 
-void UpdatePeHeader(const char* filePath, DWORD additionalSize) {
-    HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        return;
-    }
+void UpdatePeHeader(const char* filePath) {
+	HANDLE hFile = CreateFileA(filePath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return;
+	}
 
 	// PE Header
-    DWORD peOffset;
-    SetFilePointer(hFile, 0x3C, NULL, FILE_BEGIN);
-    ReadFile(hFile, &peOffset, sizeof(peOffset), NULL, NULL);
+	DWORD peOffset;
+	SetFilePointer(hFile, 0x3C, NULL, FILE_BEGIN);
+	ReadFile(hFile, &peOffset, sizeof(peOffset), NULL, NULL);
 
-    // Get Section num
-    WORD numSections;
-    SetFilePointer(hFile, peOffset + 6, NULL, FILE_BEGIN);
-    ReadFile(hFile, &numSections, sizeof(numSections), NULL, NULL);
+	// Get Section num
+	WORD numSections;
+	SetFilePointer(hFile, peOffset + 6, NULL, FILE_BEGIN);
+	ReadFile(hFile, &numSections, sizeof(numSections), NULL, NULL);
 
-    // Go to last Section
-    DWORD sectionTableOffset = peOffset + 0xF8;
-    DWORD lastSectionOffset = sectionTableOffset + (numSections - 1) * 40;
+	// Go to last Section
+	DWORD sectionTableOffset = peOffset + 0xF8;
+	DWORD lastSectionOffset = sectionTableOffset + (numSections - 1) * 40;
 
-    // Get current SizeOfRawData
-    DWORD sizeOfRawData;
-    SetFilePointer(hFile, lastSectionOffset + 16, NULL, FILE_BEGIN);
-    ReadFile(hFile, &sizeOfRawData, sizeof(sizeOfRawData), NULL, NULL);
+	// Get PointerToRawData
+	DWORD pointerToRawData;
+	SetFilePointer(hFile, lastSectionOffset + 20, NULL, FILE_BEGIN);
+	ReadFile(hFile, &pointerToRawData, sizeof(pointerToRawData), NULL, NULL);
 
-    // Get PointerToRawData
-    DWORD pointerToRawData;
-    SetFilePointer(hFile, lastSectionOffset + 20, NULL, FILE_BEGIN);
-    ReadFile(hFile, &pointerToRawData, sizeof(pointerToRawData), NULL, NULL);
+	// Calc new SizeOfRawData
+	DWORD actualSize = GetFileSize(hFile, NULL);
+	DWORD newSizeOfRawData = actualSize - pointerToRawData;
 
-    // Calc new SizeOfRawData
-    DWORD actualSize = GetFileSize(hFile, NULL);
-    DWORD newSizeOfRawData = actualSize - pointerToRawData;
+	// Update SizeOfRawData
+	SetFilePointer(hFile, lastSectionOffset + 16, NULL, FILE_BEGIN);
+	WriteFile(hFile, &newSizeOfRawData, sizeof(newSizeOfRawData), NULL, NULL);
 
-    // Update SizeOfRawData
-    SetFilePointer(hFile, lastSectionOffset + 16, NULL, FILE_BEGIN);
-    WriteFile(hFile, &newSizeOfRawData, sizeof(newSizeOfRawData), NULL, NULL);
-
-    // Update CheckSum
-    CloseHandle(hFile);
-    UpdateChecksum(filePath);
+	// Update CheckSum
+	CloseHandle(hFile);
+	UpdateChecksum(filePath);
 }
 
 void LoadResourceAndMerge(const std::string& patchFilePath, const std::string& outputFilePath) {
@@ -215,7 +229,7 @@ void LoadResourceAndMerge(const std::string& patchFilePath, const std::string& o
 	outFile.write(reinterpret_cast<const char*>(&size), 4);
 	outFile.close();
 
-	UpdatePeHeader(outputFilePath.c_str(), 0);
+	UpdatePeHeader(outputFilePath.c_str());
 	MessageBox(NULL, TEXT("EXE 自释放补丁程序生成完毕!"), TEXT("提示"), MB_OK);
 }
 
@@ -263,10 +277,10 @@ void bpsdeltaBegin()
 						mainwndpos.left + 53 * scaleFactor, mainwndpos.top + 27 * scaleFactor,
 						101 * scaleFactor, 39 * scaleFactor, hwndMain, NULL, GetModuleHandle(NULL), NULL);
 	SetWindowLongPtrA(hwndProgress, GWLP_WNDPROC, (LONG_PTR)bpsdProgressWndProc);
-	
+
 	ShowWindow(hwndProgress, SW_SHOW);
 	EnableWindow(hwndMain, FALSE);
-	
+
 	bpsdeltaProgress(NULL, 0, 1);
 }
 
@@ -372,15 +386,15 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 		if (!GetOpenFileName(&ofn)) return 0;
 		multiplePatches=(ofn.nFileOffset && patchnames[ofn.nFileOffset-1]=='\0');
 	}
-	
+
 	//get rom name and apply
-	
+
 	if (!multiplePatches)
 	{
 		file* patch = file::create(patchnames);
 		if (patch)
 		{
-		
+
 		WCHAR inromname_buf[MAX_PATH];
 		LPCWSTR inromname=NULL;
 		if (state.enableAutoRomSelector) inromname=FindRomForPatch(patch, NULL);
@@ -419,7 +433,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 			LPCWSTR foundRom=NULL;
 			bool canUseFoundRom=true;
 			bool usingFoundRom=false;
-			
+
 		redo: ;
 			WCHAR thisFileNameWithPath[MAX_PATH];
 			bool anySuccess=false;
@@ -434,12 +448,12 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 					L"部分补丁已应用, 但并非所有需要的 ROM 文件都能定位路径...",//e_no_auto
 					L"部分补丁已应用, 但并非所有给定的补丁都可被读取...",//e_io_read_patch
 				};
-			
+
 			wcscpy(thisFileNameWithPath, patchnames);
 			LPWSTR thisFileName=wcschr(thisFileNameWithPath, '\0');
 			*thisFileName='\\';
 			thisFileName++;
-			
+
 			LPWSTR thisPatchName=wcschr(patchnames, '\0')+1;
 			while (*thisPatchName)
 			{
@@ -470,10 +484,10 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 				}
 				if (!foundRom) foundRom=romname;
 				if (foundRom!=romname) canUseFoundRom=false;
-				
+
 				wcscpy(GetExtension(thisFileName), GetExtension(romname));
 				struct errorinfo errinf=ApplyPatchMem(patch, romname, true, thisFileNameWithPath, NULL, true);
-				
+
 				if (errinf.level==el_broken) worsterror=max(worsterror, e_invalid);
 				if (errinf.level==el_notthis) worsterror=max(worsterror, e_no_auto);
 				if (errinf.level==el_warning) worsterror=max(worsterror, e_warning);
@@ -549,7 +563,7 @@ int a_ApplyPatch(LPCWSTR clipatchname)
 					LPWSTR patchExtension=GetExtension(thisFileName);
 					wcscpy(patchExtension, romExtension);
 					struct errorinfo errinf=ApplyPatchMem2(patch, inrom, removeheaders, true, thisFileNameWithPath, NULL);
-					
+
 					if (errinf.level==el_broken) worsterror=max(worsterror, e_invalid);
 					if (errinf.level==el_notthis) worsterror=max(worsterror, e_invalid_this);
 					if (errinf.level==el_warning) worsterror=max(worsterror, e_warning);
@@ -577,18 +591,18 @@ void a_CreatePatch()
 	//pick roms
 	WCHAR romnames[2][MAX_PATH];
 	WCHAR patchname[MAX_PATH];
-	
+
 	romnames[0][0]='\0';
 	romnames[1][0]='\0';
 	if (!SelectRom(romnames[0], TEXT("选择原始未修改的文件"), false)) return;
 	if (!SelectRom(romnames[1], TEXT("选择已修改的文件"), false)) return;
-	
+
 	if (!wcsicmp(romnames[0], romnames[1]))
 	{
 		MessageBoxW(hwndMain, L"选择的是相同的两个文件, 请选择两个不同的文件以进行差分", ConvertUtf8ToWstring(std::string(flipsversion)).c_str(), mboxtype[el_broken]);
 		return;
 	}
-	
+
 	//pick patch name and type
 	wcscpy(patchname, romnames[1]);
 	LPWSTR extension=GetExtension(patchname);
@@ -613,7 +627,7 @@ void a_CreatePatch()
 		return;
 	}
 	state.lastPatchType=(enum patchtype)ofn.nFilterIndex;
-	
+
 	bpsdCancel=false;
 	struct errorinfo errinf=CreatePatch(romnames[0], romnames[1], (enum patchtype)ofn.nFilterIndex, NULL, patchname);
 	if (!bpsdCancel) MessageBoxA(hwndMain, errinf.description, flipsversion, mboxtype[errinf.level]);
@@ -642,7 +656,7 @@ int a_ApplyRun(LPCWSTR clipatchname)
 {
 	struct mem rommem={NULL,0};
 	struct mem patchedmem={NULL,0};
-	
+
 	WCHAR patchpath[MAX_PATH];
 	*patchpath='\0';
 	if (clipatchname)
@@ -663,7 +677,7 @@ int a_ApplyRun(LPCWSTR clipatchname)
 		ofn.lpstrDefExt=TEXT("bps");
 		if (!GetOpenFileName(&ofn)) return 0;
 	}
-	
+
 	struct errorinfo errinf;
 	file* patch = file::create(patchpath);
 	if (!patch)
@@ -671,7 +685,7 @@ int a_ApplyRun(LPCWSTR clipatchname)
 		errinf=error(el_broken, Utf8ToAnsi("无法读取输入的补丁文件!").c_str());
 		goto error;
 	}
-	
+
 	LPCWSTR romname;
 	romname=NULL;
 	if (state.enableAutoRomSelector) romname=FindRomForPatch(patch, NULL);
@@ -686,34 +700,34 @@ int a_ApplyRun(LPCWSTR clipatchname)
 		}
 		romname=romname_base;
 	}
-	
+
 	if (!*st_emulator && !a_SetEmulator())
 	{
 		delete patch;
 		return 0;
 	}
-	
+
 	//WCHAR tempfilepath[MAX_PATH];
 	//WCHAR tempfilename[MAX_PATH];
 	//if (!GetTempPath(MAX_PATH, tempfilepath)) wcscpy(tempfilepath, TEXT("."));
 	//if (!GetTempFileName(tempfilepath, TEXT("rom"), 0, tempfilename)) wcscpy(tempfilename, TEXT("temprom.tmp"));
-	
+
 	WCHAR outfilename_rel[MAX_PATH];
 	wcscpy(outfilename_rel, patchpath);
 	wcscpy(GetExtension(outfilename_rel), GetExtension(romname));
 	WCHAR outfilename[MAX_PATH];
 	GetFullPathName(outfilename_rel, MAX_PATH, outfilename, NULL);
-	
+
 	errinf=ApplyPatchMem(patch, romname, true, outfilename, NULL, state.enableAutoRomSelector);
 error:
-	
+
 	if (errinf.level!=el_ok) MessageBoxA(hwndMain, errinf.description, flipsversion, mboxtype[errinf.level]);
 	if (errinf.level>=el_notthis) return el_broken;
-	
+
 	delete patch;
 	if (rommem.ptr) FreeFileMemory(rommem);
 	if (patchedmem.ptr) free(patchedmem.ptr);
-	
+
 	WCHAR cmdline[1+MAX_PATH+3+MAX_PATH+1+1];
 	swprintf(cmdline, 1+MAX_PATH+3+MAX_PATH+1+1, TEXT("\"%ls\" \"%ls\""), st_emulator, outfilename);
 	WCHAR * dirend=GetBaseName(patchpath);
@@ -727,7 +741,7 @@ error:
 		//DeleteFile(tempfilename);
 		return el_broken;
 	}
-	
+
 	//I don't clean up the temp file when the emulator is done.
 	//- It would just force me to keep track of a bunch of state.
 	//- It'd force me to not exit when the window is closed.
@@ -750,23 +764,23 @@ void a_ShowSettings()
 		SetActiveWindow(hwndSettings);
 		return;
 	}
-	
+
 	hwndSettings=CreateWindowA(
 		"flips", flipsversion,
 		WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
 		(3+6+202+6+3+18) * scaleFactor, (21+6+23+6+23+3+13+1+17+4+17+6+3) * scaleFactor,
 		NULL, NULL, GetModuleHandle(NULL), NULL);
-	
+
 	HFONT hfont=(HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	HWND item;
-	
+
 	int x=18 * scaleFactor;
 	int y=6 * scaleFactor;
 	int lineheight;
-	
+
 #define endline(padding) do { x=18; y+=lineheight+padding; } while(0)
 #define line(height) lineheight=height
-	
+
 #define widget(type, style, text, w, h, action) \
 	do { \
 		int thisy=y+(lineheight-h)/2; \
@@ -775,23 +789,23 @@ void a_ShowSettings()
 		SendMessage(item, WM_SETFONT, (WPARAM)hfont, 0); \
 		x+=w+6; \
 	} while(0)
-	
+
 #define firstbutton(text, w, h, action) \
 	widget(WC_BUTTONW, WS_GROUP|BS_DEFPUSHBUTTON, text, w, h, action)
-	
+
 #define button(text, w, h, action) \
 	widget(WC_BUTTONW, BS_PUSHBUTTON, text, w, h, action)
-	
+
 #define labelL(text, w, h, action) \
 	widget(WC_STATICW, SS_LEFT, text, w, h, action)
 #define labelC(text, w, h, action) \
 	widget(WC_STATICW, SS_CENTER, text, w, h, action)
-	
+
 #define radio(text, w, h, action) \
 	widget(WC_BUTTONW, BS_AUTORADIOBUTTON, text, w, h, action)
 #define check(text, w, h, action) \
 	widget(WC_BUTTONW, BS_AUTOCHECKBOX, text, w, h, action)
-	
+
 	line(23 * scaleFactor);
 	firstbutton(L"选择模拟器", 202 * scaleFactor, 23 * scaleFactor, 101);
 	endline(6 * scaleFactor);
@@ -802,7 +816,7 @@ void a_ShowSettings()
 	button(assocStatus ? L"取消关联补丁文件" : L"关联补丁文件", 108 * scaleFactor, 23 * scaleFactor, 102); assocButton=item;
 	labelL(assocStatus ? L"(已关联)" : L"(尚未关联)", 98 * scaleFactor, 13 * scaleFactor, 0); assocText=item;
 	endline(3 * scaleFactor);
-	
+
 	line(13 * scaleFactor);
 	labelC(L"当双击打开补丁文件时做此操作:", 175 * scaleFactor, 13 * scaleFactor, 0);
 	endline(1 * scaleFactor);
@@ -811,11 +825,11 @@ void a_ShowSettings()
 	radio(L"创建 ROM", 79 * scaleFactor, 17 * scaleFactor, 103); Button_SetCheck(item, (state.openInEmulatorOnAssoc==false));
 	radio(L"于模拟器中运行", 105 * scaleFactor, 17 * scaleFactor, 104); Button_SetCheck(item, (state.openInEmulatorOnAssoc==true));
 	endline(4 * scaleFactor);
-	
+
 	line(17 * scaleFactor);
 	check(L"启用自动选取 ROM", 202 * scaleFactor, 17 * scaleFactor, 105); Button_SetCheck(item, (state.enableAutoRomSelector));
 	endline(3 * scaleFactor);
-	
+
 	ShowWindow(hwndSettings, SW_SHOW);
 #undef firstbutton
 #undef button
@@ -869,7 +883,7 @@ void a_AssignFileTypes(bool checkKey, bool deleteKey)
 			wcscpy(outstringend, TEXT(value)); key_core(checkKey, TEXT(path), outstring, deleteKey, &refresh)
 #define key_touch(path) \
 			key_core(checkKey, TEXT(path), NULL, deleteKey, &refresh)
-	
+
 	key(".ips", "FloatingIPSFileIPS");
 	if (!deleteKey) {
 		key("FloatingIPSFileIPS", "Floating IPS File");
@@ -884,7 +898,7 @@ void a_AssignFileTypes(bool checkKey, bool deleteKey)
 		key_touch("FloatingIPSFileIPS\\shell");
 		key("FloatingIPSFileIPS", "Floating IPS File");
 	}
-	
+
 	key(".bps", "FloatingIPSFileBPS");
 	if (!deleteKey) {
 		key("FloatingIPSFileBPS", "Floating IPS File");
@@ -899,11 +913,11 @@ void a_AssignFileTypes(bool checkKey, bool deleteKey)
 		key_touch("FloatingIPSFileBPS\\shell");
 		key("FloatingIPSFileBPS", "Floating IPS File");
 	}
-	
+
 	if (refresh)
 	{
 		SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
-		
+
 		if (hwndMain)
 		{
 			RECT wndpos;
@@ -1022,7 +1036,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			if (wParam==4) a_ShowSettings();
 			if (wParam==5) a_IpsToExe();
 			if (wParam==6) a_BpsToExe();
-			
+
 			if (wParam==101) a_SetEmulator();
 			if (wParam==102) a_AssignFileTypes(assocStatus ? true : false, assocStatus);
 			if (wParam==103) state.openInEmulatorOnAssoc=false;
@@ -1077,17 +1091,18 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	wc.lpszMenuName=NULL;
 	wc.lpszClassName="flips";
 	RegisterClassA(&wc);
-	
+
 	MSG msg;
 	hwndMain=CreateWindowA(
 				"flips", flipsversion,
 				WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER|WS_MINIMIZEBOX,
 				state.windowleft, state.windowtop, 240 * scaleFactor, 124 * scaleFactor, NULL, NULL, GetModuleHandle(NULL), NULL);
-	
+
+	if (state.windowleft == CW_USEDEFAULT && state.windowtop == CW_USEDEFAULT) CenterWindow(hwndMain);
 	HFONT hfont=try_create_font("Segoe UI", 9);
 	if (!hfont) hfont=try_create_font("MS Shell Dlg 2", 8);
 	if (!hfont) hfont=(HFONT)GetStockObject(DEFAULT_GUI_FONT);
-	
+
 	int buttonid=0;
 	HWND lastbutton;
 #define button(x,y,w,h, text) \
@@ -1103,9 +1118,9 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 	button(122 * scaleFactor, 37 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"设定");
 	button(24 * scaleFactor, 68 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"IPS转EXE");
 	button(122 * scaleFactor, 68 * scaleFactor, 90 * scaleFactor, 23 * scaleFactor, L"BPS转EXE");
-	
+
 	ShowWindow(hwndMain, nCmdShow);
-	
+
 	while (GetMessageA(&msg, NULL, 0, 0)>0)
 	{
 		if (!IsDialogMessageA(hwndMain, &msg))
@@ -1114,7 +1129,7 @@ int ShowMainWindow(HINSTANCE hInstance, int nCmdShow)
 			DispatchMessageA(&msg);
 		}
 	}
-	
+
 	return msg.wParam;
 }
 
@@ -1124,17 +1139,17 @@ void GUIClaimConsole()
 	// not launched from one (it'd swiftly go away on app exit anyways), and it doesn't like being
 	// launched from cmd since cmd wants to run a new command if spawning a gui app (I can't make it
 	// not be a gui app because that flashes a console; it acts sanely from batch files)
-	
+
 	bool claimstdin=(GetFileType(GetStdHandle(STD_INPUT_HANDLE))==FILE_TYPE_UNKNOWN);
 	bool claimstdout=(GetFileType(GetStdHandle(STD_OUTPUT_HANDLE))==FILE_TYPE_UNKNOWN);
 	bool claimstderr=(GetFileType(GetStdHandle(STD_ERROR_HANDLE))==FILE_TYPE_UNKNOWN);
-	
+
 	if (claimstdin || claimstdout || claimstderr) AttachConsole(ATTACH_PARENT_PROCESS);
-	
+
 	if (claimstdin) freopen("CONIN$", "rt", stdin);
 	if (claimstdout) freopen("CONOUT$", "wt", stdout);
 	if (claimstderr) freopen("CONOUT$", "wt", stderr);
-	
+
 	if (claimstdout) fputc('\r', stdout);
 	if (claimstderr) fputc('\r', stderr);
 }
@@ -1144,10 +1159,12 @@ int nCmdShow_;
 
 WCHAR * get_cfgpath()
 {
-	static WCHAR cfgfname[MAX_PATH+8];
+	static WCHAR cfgfname[MAX_PATH];
 	GetModuleFileNameW(NULL, cfgfname, MAX_PATH);
-	WCHAR * ext=GetExtension(cfgfname);
-	if (ext) *ext='\0';
+
+	WCHAR* lastSlash = wcsrchr(cfgfname, L'\\');
+	*(lastSlash + 1) = L'\0';
+
 	wcscat(cfgfname, TEXT("cfg.bin"));
 	return cfgfname;
 }
@@ -1164,7 +1181,7 @@ void GUILoadConfig()
 	memcpy(target, configbin.ptr, size); \
 	configbin.ptr += size; \
 	configbin.len -= size
-		
+
 		readconfig(&state, sizeof(state));
 		if (memcmp(state.signature, "FlipscfgW", sizeof(state.signature))!=0 || state.cfgversion!=mycfgversion) goto badconfig;
 		int emulen;
@@ -1192,12 +1209,12 @@ void GUILoadConfig()
 int GUIShow(LPCWSTR filename)
 {
 	GUILoadConfig();
-	
+
 	INITCOMMONCONTROLSEX initctrls;
 	initctrls.dwSize=sizeof(initctrls);
 	initctrls.dwICC=ICC_STANDARD_CLASSES;
 	InitCommonControlsEx(&initctrls);
-	
+
 	int ret;
 	if (filename)
 	{
@@ -1205,8 +1222,8 @@ int GUIShow(LPCWSTR filename)
 		else ret=a_ApplyRun(filename);
 	}
 	else ret=ShowMainWindow(hInstance_, nCmdShow_);
-	
-	HANDLE file=CreateFile(get_cfgpath(), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);
+
+	HANDLE file=CreateFile(get_cfgpath(), GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file!=INVALID_HANDLE_VALUE)
 	{
 		DWORD whocares;
@@ -1218,7 +1235,7 @@ int GUIShow(LPCWSTR filename)
 		WriteFile(file, romlist.ptr, romlist.len, &whocares, NULL);
 		CloseHandle(file);
 	}
-	
+
 	return ret;
 }
 

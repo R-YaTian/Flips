@@ -284,12 +284,10 @@ void bpsdeltaBegin()
 	bpsdeltaProgress(NULL, 0, 1);
 }
 
+// sub thread
 bool bpsdeltaProgress(void* userdata, size_t done, size_t total)
 {
 	if (!bpsdeltaGetProgress(done, total)) return !bpsdCancel;
-	if (hwndProgress) InvalidateRect(hwndProgress, NULL, false);
-	MSG Msg;
-	while (PeekMessage(&Msg, NULL, 0, 0, PM_REMOVE)) DispatchMessage(&Msg);
 	return !bpsdCancel;
 }
 
@@ -325,6 +323,22 @@ void bpsdeltaEnd()
 	EnableWindow(hwndMain, TRUE);
 	DestroyWindow(hwndProgress);
 	hwndProgress=NULL;
+}
+
+void bpsdeltaThreadFunc(
+	file* source, file* target, struct mem metadata, struct mem* patchmem, 
+	bool moremem, bpserror* errinf
+) {
+	*errinf = bps_create_delta(source, target, metadata, patchmem, bpsdeltaProgress, NULL, moremem);
+}
+
+void ProcessBPSUIUpdate() {
+	if (hwndProgress)
+		InvalidateRect(hwndProgress, NULL, false);
+	MSG msg;
+	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+		DispatchMessage(&msg);
+	}
 }
 
 bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)

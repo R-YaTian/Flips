@@ -290,6 +290,14 @@ int GUIShow(LPCWSTR filename);
 void GUILoadConfig();
 //LPCWSTR GUIGetFileFor(uint32_t crc32); // use FindRomForPatch instead
 #ifdef FLIPS_WINDOWS
+#ifndef FLIPS_WINDOWS_SFP
+#include <thread>
+void bpsdeltaThreadFunc(
+    file* source, file* target, struct mem metadata, struct mem* patchmem, 
+    bool moremem, bpserror* errinf
+);
+void ProcessBPSUIUpdate();
+#endif
 void GUIClaimConsole();
 enum patchtype IdentifyPatch(file* patch);
 #else

@@ -1037,7 +1037,19 @@ struct errorinfo CreatePatchToMem(LPCWSTR inromname, LPCWSTR outromname, enum pa
 		if (guiActive)
 		{
 			bpsdeltaBegin();
+#ifndef FLIPS_WINDOWS_SFP
+			bpserror errtype = (bpserror) -1;
+			std::thread bpsThread;
+			bpsThread = std::thread(bpsdeltaThreadFunc, roms[0], roms[1], manifest, patchmem, (patchtype==ty_bps_moremem), &errtype);
+			while (errtype == -1) {
+				ProcessBPSUIUpdate();
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			}
+			bpsThread.join();
+			errinf = bpserrors[errtype];
+#else
 			errinf=bpserrors[bps_create_delta(roms[0], roms[1], manifest, patchmem, bpsdeltaProgress, NULL, (patchtype==ty_bps_moremem))];
+#endif
 			bpsdeltaEnd();
 		}
 		else

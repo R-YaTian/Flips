@@ -275,7 +275,7 @@ void bpsdeltaBegin()
 						"flips", flipsversion,
 						WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_BORDER,
 						mainwndpos.left + 53 * scaleFactor, mainwndpos.top + 27 * scaleFactor,
-						101 * scaleFactor, 39 * scaleFactor, hwndMain, NULL, GetModuleHandle(NULL), NULL);
+						101 * scaleFactor, 43 * scaleFactor, hwndMain, NULL, GetModuleHandle(NULL), NULL);
 	SetWindowLongPtrA(hwndProgress, GWLP_WNDPROC, (LONG_PTR)bpsdProgressWndProc);
 
 	ShowWindow(hwndProgress, SW_SHOW);
@@ -284,12 +284,34 @@ void bpsdeltaBegin()
 	bpsdeltaProgress(NULL, 0, 1);
 }
 
-// sub thread
+// --- sub thread ---
+WCHAR bpsdStr[24];
+int lastPromille = -1;
+
+static bool bpsdGetProgress(size_t done, size_t total)
+{
+	if (total < 1000) total = 1000; //avoid div by zero
+	int promille = done / (total / 1000);
+	if (promille == lastPromille) return false;
+	lastPromille = promille;
+	if (promille >= 1000) return false;
+	wcscpy(bpsdStr, L"请稍候... ");
+	bpsdStr[7] = '0' + promille / 100;
+	int digit1 = (promille < 100) ? 7 : 8;
+	bpsdStr[digit1+0] = '0' + promille / 10 % 10;
+	bpsdStr[digit1+1] = '.';
+	bpsdStr[digit1+2] = '0' + promille % 10;
+	bpsdStr[digit1+3] = '%';
+	bpsdStr[digit1+4] = '\0';
+	return true;
+}
+
 bool bpsdeltaProgress(void* userdata, size_t done, size_t total)
 {
-	if (!bpsdeltaGetProgress(done, total)) return !bpsdCancel;
+	if (!bpsdGetProgress(done, total)) return !bpsdCancel;
 	return !bpsdCancel;
 }
+// --- sub thread ---
 
 LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
@@ -305,7 +327,7 @@ LRESULT CALLBACK bpsdProgressWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM
 			FillRect(ps.hdc, &rc, GetSysColorBrush(COLOR_3DFACE));
 			SetBkColor(ps.hdc, GetSysColor(COLOR_3DFACE));
 			SelectObject(ps.hdc, (HFONT)GetStockObject(DEFAULT_GUI_FONT));
-			DrawTextA(ps.hdc, bpsdProgStr, -1, &rc, DT_CENTER | DT_NOCLIP);
+			DrawTextW(ps.hdc, bpsdStr, -1, &rc, DT_CENTER | DT_NOCLIP);
 			EndPaint(hwnd, &ps);
 		}
 		break;

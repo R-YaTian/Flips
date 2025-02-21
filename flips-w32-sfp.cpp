@@ -126,7 +126,7 @@ filemap* filemap::create(LPCWSTR filename) { return filemap::create_fallback(fil
 HWND hwndMain=NULL;
 
 void bpsdeltaBegin() { return; }
-bool bpsdeltaProgress(void* userdata, size_t done, size_t total) { return false; }
+bool bpsdeltaProgress(void* userdata, size_t done, size_t total) { return true; }
 void bpsdeltaEnd() { return; }
 
 bool SelectRom(LPWSTR filename, LPCWSTR title, bool output)
